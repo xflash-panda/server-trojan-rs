@@ -1,6 +1,6 @@
 [package]
 name = "server-trojan-r"
-version = "0.2.12"
+version = "0.2.13"
 edition = "2021"
 
 [dependencies]
@@ -37,7 +37,7 @@ async-trait = "0.1"
 arc-swap = "1"
 
 # ACL Engine (remote)
-acl-engine-r = { git = "https://github.com/xflash-panda/acl-engine-r.git", tag = "v0.3.1", features = ["async"] }
+acl-engine-r = { git = "https://github.com/xflash-panda/acl-engine-r.git", tag = "v0.4.0", features = ["async"] }
 
 # Panel gRPC Client
 server-r-agent-proto = { git = "https://github.com/xflash-panda/server-r-agent-proto.git", tag = "v0.1.2" }
