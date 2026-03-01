@@ -347,9 +347,13 @@ impl AclEngine {
         }
 
         // Step 6: Compile rules
-        let compiled =
-            acl_engine_r::compile(&text_rules, &outbounds, NonZeroUsize::new(4096).unwrap(), &geo_loader)
-                .map_err(|e| anyhow!("Failed to compile ACL rules: {}", e))?;
+        let compiled = acl_engine_r::compile(
+            &text_rules,
+            &outbounds,
+            NonZeroUsize::new(4096).unwrap(),
+            &geo_loader,
+        )
+        .map_err(|e| anyhow!("Failed to compile ACL rules: {}", e))?;
 
         log::info!(
             outbounds = outbounds.len(),
@@ -379,9 +383,13 @@ impl AclEngine {
         let text_rules = acl_engine_r::parse_rules("direct(all)")
             .map_err(|e| anyhow!("Failed to parse default rules: {}", e))?;
 
-        let compiled =
-            acl_engine_r::compile(&text_rules, &outbounds, NonZeroUsize::new(1024).unwrap(), &NilGeoLoader)
-                .map_err(|e| anyhow!("Failed to compile default rules: {}", e))?;
+        let compiled = acl_engine_r::compile(
+            &text_rules,
+            &outbounds,
+            NonZeroUsize::new(1024).unwrap(),
+            &NilGeoLoader,
+        )
+        .map_err(|e| anyhow!("Failed to compile default rules: {}", e))?;
 
         Ok(Self {
             compiled,
