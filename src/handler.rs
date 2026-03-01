@@ -598,14 +598,14 @@ fn acl_addr_to_address(addr: &acl::Addr) -> Address {
     use std::net::{Ipv4Addr, Ipv6Addr};
 
     // Try to parse as IP address first
-    if let Ok(ipv4) = addr.host.parse::<Ipv4Addr>() {
-        return Address::IPv4(ipv4.octets(), addr.port);
+    if let Ok(ipv4) = addr.host().parse::<Ipv4Addr>() {
+        return Address::IPv4(ipv4.octets(), addr.port());
     }
-    if let Ok(ipv6) = addr.host.parse::<Ipv6Addr>() {
-        return Address::IPv6(ipv6.octets(), addr.port);
+    if let Ok(ipv6) = addr.host().parse::<Ipv6Addr>() {
+        return Address::IPv6(ipv6.octets(), addr.port());
     }
     // Otherwise treat as domain
-    Address::Domain(addr.host.clone(), addr.port)
+    Address::Domain(addr.host().to_string(), addr.port())
 }
 
 #[cfg(test)]

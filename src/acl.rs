@@ -25,6 +25,7 @@
 //! ```
 
 use std::collections::HashMap;
+use std::num::NonZeroUsize;
 use std::path::Path;
 use std::sync::Arc;
 
@@ -126,10 +127,6 @@ pub struct HttpConfig {
     /// Use HTTPS for proxy connection
     #[serde(default)]
     pub https: bool,
-
-    /// Skip TLS certificate verification (insecure)
-    #[serde(default)]
-    pub insecure: bool,
 }
 
 /// Direct outbound configuration
@@ -200,6 +197,7 @@ impl OutboundHandler {
                     (&config.username, &config.password)
                 {
                     Socks5::with_auth(&config.addr, username, password)
+                        .map_err(|e| anyhow!("Invalid socks5 outbound '{}': {}", entry.name, e))?
                 } else {
                     Socks5::new(&config.addr)
                 };
@@ -215,14 +213,15 @@ impl OutboundHandler {
                     .as_ref()
                     .ok_or_else(|| anyhow!("http config required for outbound '{}'", entry.name))?;
 
-                let mut http = Http::new(&config.addr, config.https);
+                let mut http = if config.https {
+                    Http::try_new(&config.addr, true)
+                        .map_err(|e| anyhow!("Invalid http outbound '{}': {}", entry.name, e))?
+                } else {
+                    Http::new(&config.addr)
+                };
 
                 if let (Some(username), Some(password)) = (&config.username, &config.password) {
                     http = http.with_auth(username, password);
-                }
-
-                if config.insecure {
-                    http = http.with_insecure(true);
                 }
 
                 Ok(OutboundHandler::Http(Arc::new(http)))
@@ -349,8 +348,9 @@ impl AclEngine {
         }
 
         // Step 6: Compile rules
-        let compiled = acl_engine_r::compile(&text_rules, &outbounds, 4096, &geo_loader)
-            .map_err(|e| anyhow!("Failed to compile ACL rules: {}", e))?;
+        let compiled =
+            acl_engine_r::compile(&text_rules, &outbounds, NonZeroUsize::new(4096).unwrap(), &geo_loader)
+                .map_err(|e| anyhow!("Failed to compile ACL rules: {}", e))?;
 
         log::info!(
             outbounds = outbounds.len(),
@@ -380,8 +380,9 @@ impl AclEngine {
         let text_rules = acl_engine_r::parse_rules("direct(all)")
             .map_err(|e| anyhow!("Failed to parse default rules: {}", e))?;
 
-        let compiled = acl_engine_r::compile(&text_rules, &outbounds, 1024, &NilGeoLoader)
-            .map_err(|e| anyhow!("Failed to compile default rules: {}", e))?;
+        let compiled =
+            acl_engine_r::compile(&text_rules, &outbounds, NonZeroUsize::new(1024).unwrap(), &NilGeoLoader)
+                .map_err(|e| anyhow!("Failed to compile default rules: {}", e))?;
 
         Ok(Self {
             compiled,
@@ -580,7 +581,6 @@ acl:
                 username: None,
                 password: None,
                 https: false,
-                insecure: false,
             }),
             direct: None,
         };
@@ -647,7 +647,6 @@ outbounds:
       username: admin
       password: secret
       https: true
-      insecure: true
 acl:
   inline:
     - auth-proxy(all)
@@ -667,7 +666,6 @@ acl:
 
         let http = &config.outbounds[1];
         assert!(http.http.as_ref().unwrap().https);
-        assert!(http.http.as_ref().unwrap().insecure);
     }
 
     #[test]
@@ -788,7 +786,7 @@ acl:
         };
         assert_eq!(format!("{:?}", socks5), "Socks5(udp=true)");
 
-        let http = OutboundHandler::Http(Arc::new(Http::new("127.0.0.1:8080", false)));
+        let http = OutboundHandler::Http(Arc::new(Http::new("127.0.0.1:8080")));
         assert_eq!(format!("{:?}", http), "Http");
     }
 
