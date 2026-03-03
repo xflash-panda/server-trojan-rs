@@ -37,7 +37,8 @@ use serde::{Deserialize, Serialize};
 pub use acl_engine_r::{
     geo::{AutoGeoLoader, GeoIpFormat, GeoSiteFormat, NilGeoLoader},
     outbound::{
-        Addr, AsyncOutbound, AsyncTcpConn, AsyncUdpConn, Direct, DirectMode, Http, Reject, Socks5,
+        Addr, AsyncOutbound, AsyncTcpConn, AsyncUdpConn, Direct, DirectMode, DirectOptions, Http,
+        Reject, Socks5,
     },
     HostInfo, Protocol,
 };
@@ -135,10 +136,39 @@ pub struct DirectConfig {
     /// IP mode: "auto", "4", "6", "prefer4", "prefer6"
     #[serde(default = "default_ip_mode")]
     pub mode: String,
+
+    /// Bind outgoing connections to a specific local IPv4 address
+    #[serde(rename = "bindIPv4", default)]
+    pub bind_ipv4: Option<String>,
+
+    /// Bind outgoing connections to a specific local IPv6 address
+    #[serde(rename = "bindIPv6", default)]
+    pub bind_ipv6: Option<String>,
+
+    /// Bind outgoing connections to a specific network device (Linux only, SO_BINDTODEVICE)
+    /// Mutually exclusive with bindIPv4/bindIPv6
+    #[serde(rename = "bindDevice", default)]
+    pub bind_device: Option<String>,
+
+    /// Enable TCP Fast Open for outgoing connections (Linux/macOS)
+    #[serde(rename = "fastOpen", default)]
+    pub fast_open: bool,
 }
 
 fn default_ip_mode() -> String {
     "auto".to_string()
+}
+
+impl Default for DirectConfig {
+    fn default() -> Self {
+        Self {
+            mode: default_ip_mode(),
+            bind_ipv4: None,
+            bind_ipv6: None,
+            bind_device: None,
+            fast_open: false,
+        }
+    }
 }
 
 /// Outbound handler wrapper
@@ -170,23 +200,139 @@ impl OutboundHandler {
     pub fn from_entry(entry: &OutboundEntry) -> Result<Self> {
         match entry.outbound_type.as_str() {
             "direct" => {
-                let mode = entry
-                    .direct
-                    .as_ref()
-                    .map(|d| d.mode.as_str())
-                    .unwrap_or("auto");
+                let config = entry.direct.as_ref();
+                let mode = config.map(|d| d.mode.as_str()).unwrap_or("auto");
 
                 let direct_mode = match mode {
+                    "auto" => DirectMode::Auto,
                     "4" | "only4" => DirectMode::Only4,
                     "6" | "only6" => DirectMode::Only6,
                     "prefer4" | "46" => DirectMode::Prefer46,
                     "prefer6" | "64" => DirectMode::Prefer64,
-                    _ => DirectMode::Auto,
+                    _ => {
+                        return Err(anyhow!(
+                            "Invalid direct mode '{}' for outbound '{}', \
+                             valid values: auto, 4, only4, 6, only6, prefer4, 46, prefer6, 64",
+                            mode,
+                            entry.name
+                        ));
+                    }
                 };
 
-                Ok(OutboundHandler::Direct(Arc::new(Direct::with_mode(
-                    direct_mode,
-                ))))
+                let bind_ip4 = config
+                    .and_then(|d| d.bind_ipv4.as_deref())
+                    .map(|s| {
+                        s.parse::<std::net::Ipv4Addr>()
+                            .map_err(|e| anyhow!("Invalid bindIPv4 '{}': {}", s, e))
+                    })
+                    .transpose()?;
+                let bind_ip6 = config
+                    .and_then(|d| d.bind_ipv6.as_deref())
+                    .map(|s| {
+                        s.parse::<std::net::Ipv6Addr>()
+                            .map_err(|e| anyhow!("Invalid bindIPv6 '{}': {}", s, e))
+                    })
+                    .transpose()?;
+                let bind_device = config.and_then(|d| d.bind_device.clone());
+                let fast_open = config.is_some_and(|d| d.fast_open);
+
+                // Validate bind IPs at startup by trying to bind a test socket
+                if let Some(ip) = bind_ip4 {
+                    let socket = socket2::Socket::new(
+                        socket2::Domain::IPV4,
+                        socket2::Type::STREAM,
+                        Some(socket2::Protocol::TCP),
+                    )
+                    .map_err(|e| anyhow!("Failed to create test socket: {}", e))?;
+                    let bind_addr: std::net::SocketAddr =
+                        std::net::SocketAddr::new(std::net::IpAddr::V4(ip), 0);
+                    socket.bind(&bind_addr.into()).map_err(|e| {
+                        anyhow!(
+                            "FATAL: outbound '{}' bindIPv4 {} failed: {}",
+                            entry.name,
+                            ip,
+                            e
+                        )
+                    })?;
+                }
+                if let Some(ip) = bind_ip6 {
+                    let socket = socket2::Socket::new(
+                        socket2::Domain::IPV6,
+                        socket2::Type::STREAM,
+                        Some(socket2::Protocol::TCP),
+                    )
+                    .map_err(|e| anyhow!("Failed to create test socket: {}", e))?;
+                    let bind_addr: std::net::SocketAddr =
+                        std::net::SocketAddr::new(std::net::IpAddr::V6(ip), 0);
+                    socket.bind(&bind_addr.into()).map_err(|e| {
+                        anyhow!(
+                            "FATAL: outbound '{}' bindIPv6 {} failed: {}",
+                            entry.name,
+                            ip,
+                            e
+                        )
+                    })?;
+                }
+
+                // Validate bindDevice at startup
+                #[cfg(target_os = "linux")]
+                if let Some(ref device) = bind_device {
+                    let socket = socket2::Socket::new(
+                        socket2::Domain::IPV4,
+                        socket2::Type::STREAM,
+                        Some(socket2::Protocol::TCP),
+                    )
+                    .map_err(|e| anyhow!("Failed to create test socket: {}", e))?;
+                    socket.bind_device(Some(device.as_bytes())).map_err(|e| {
+                        anyhow!(
+                            "FATAL: outbound '{}' bindDevice '{}' failed: {}",
+                            entry.name,
+                            device,
+                            e
+                        )
+                    })?;
+                }
+                #[cfg(not(target_os = "linux"))]
+                if let Some(ref device) = bind_device {
+                    return Err(anyhow!(
+                        "FATAL: outbound '{}' bindDevice '{}' is only supported on Linux",
+                        entry.name,
+                        device
+                    ));
+                }
+
+                let opts = DirectOptions {
+                    mode: direct_mode,
+                    bind_ip4,
+                    bind_ip6,
+                    bind_device,
+                    fast_open,
+                    timeout: None,
+                };
+                let direct = Direct::with_options(opts)
+                    .map_err(|e| anyhow!("Invalid direct outbound '{}': {}", entry.name, e))?;
+
+                // Log the direct outbound configuration
+                let mut parts = vec![format!("mode={}", mode)];
+                if let Some(ip) = bind_ip4 {
+                    parts.push(format!("bindIPv4={}", ip));
+                }
+                if let Some(ip) = bind_ip6 {
+                    parts.push(format!("bindIPv6={}", ip));
+                }
+                if let Some(ref dev) = config.and_then(|d| d.bind_device.as_ref()) {
+                    parts.push(format!("bindDevice={}", dev));
+                }
+                if fast_open {
+                    parts.push("fastOpen=true".to_string());
+                }
+                log::info!(
+                    outbound = %entry.name,
+                    "Direct outbound configured: {}",
+                    parts.join(", ")
+                );
+
+                Ok(OutboundHandler::Direct(Arc::new(direct)))
             }
             "socks5" => {
                 let config = entry.socks5.as_ref().ok_or_else(|| {
@@ -497,13 +643,19 @@ impl AclRouter {
     ) -> crate::core::hooks::OutboundType {
         match self.engine.match_host(host, port, Protocol::TCP) {
             Some(handler) => match &*handler {
-                OutboundHandler::Direct(_) => crate::core::hooks::OutboundType::Direct(resolved),
+                OutboundHandler::Direct(_) => crate::core::hooks::OutboundType::Direct {
+                    resolved,
+                    handler: Some(handler),
+                },
                 OutboundHandler::Socks5 { .. } | OutboundHandler::Http(_) => {
                     crate::core::hooks::OutboundType::Proxy(handler)
                 }
                 OutboundHandler::Reject(_) => crate::core::hooks::OutboundType::Reject,
             },
-            None => crate::core::hooks::OutboundType::Direct(resolved),
+            None => crate::core::hooks::OutboundType::Direct {
+                resolved,
+                handler: None,
+            },
         }
     }
 }
@@ -549,6 +701,7 @@ acl:
             http: None,
             direct: Some(DirectConfig {
                 mode: "auto".to_string(),
+                ..Default::default()
             }),
         };
 
@@ -718,12 +871,313 @@ acl:
                 http: None,
                 direct: Some(DirectConfig {
                     mode: mode_str.to_string(),
+                    ..Default::default()
                 }),
             };
 
             let handler = OutboundHandler::from_entry(&entry).unwrap();
             assert!(matches!(handler, OutboundHandler::Direct(_)));
         }
+    }
+
+    #[test]
+    fn test_direct_invalid_mode_rejected() {
+        let entry = OutboundEntry {
+            name: "direct".to_string(),
+            outbound_type: "direct".to_string(),
+            socks5: None,
+            http: None,
+            direct: Some(DirectConfig {
+                mode: "invalid_mode".to_string(),
+                ..Default::default()
+            }),
+        };
+        let err = OutboundHandler::from_entry(&entry).unwrap_err();
+        assert!(
+            err.to_string().contains("Invalid direct mode"),
+            "Expected mode validation error, got: {}",
+            err
+        );
+    }
+
+    #[test]
+    fn test_direct_invalid_bind_ipv4_rejected() {
+        let entry = OutboundEntry {
+            name: "direct".to_string(),
+            outbound_type: "direct".to_string(),
+            socks5: None,
+            http: None,
+            direct: Some(DirectConfig {
+                bind_ipv4: Some("not-an-ip".to_string()),
+                ..Default::default()
+            }),
+        };
+        let err = OutboundHandler::from_entry(&entry).unwrap_err();
+        assert!(
+            err.to_string().contains("Invalid bindIPv4"),
+            "Expected IPv4 parse error, got: {}",
+            err
+        );
+    }
+
+    #[test]
+    fn test_direct_invalid_bind_ipv6_rejected() {
+        let entry = OutboundEntry {
+            name: "direct".to_string(),
+            outbound_type: "direct".to_string(),
+            socks5: None,
+            http: None,
+            direct: Some(DirectConfig {
+                bind_ipv6: Some("not-an-ipv6".to_string()),
+                ..Default::default()
+            }),
+        };
+        let err = OutboundHandler::from_entry(&entry).unwrap_err();
+        assert!(
+            err.to_string().contains("Invalid bindIPv6"),
+            "Expected IPv6 parse error, got: {}",
+            err
+        );
+    }
+
+    #[test]
+    fn test_direct_bind_device_exclusive_with_bind_ip() {
+        let entry = OutboundEntry {
+            name: "direct".to_string(),
+            outbound_type: "direct".to_string(),
+            socks5: None,
+            http: None,
+            direct: Some(DirectConfig {
+                bind_ipv4: Some("127.0.0.1".to_string()),
+                bind_device: Some("eth0".to_string()),
+                ..Default::default()
+            }),
+        };
+        // Must fail: either mutual exclusion (Linux) or platform not supported (non-Linux)
+        let err = OutboundHandler::from_entry(&entry).unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.contains("mutually exclusive")
+                || msg.contains("bind_device")
+                || msg.contains("only supported on Linux"),
+            "Expected device-related error, got: {}",
+            msg
+        );
+    }
+
+    #[test]
+    fn test_direct_bind_ipv4_unreachable_rejected() {
+        // Use an IP that cannot exist on any local interface
+        let entry = OutboundEntry {
+            name: "direct".to_string(),
+            outbound_type: "direct".to_string(),
+            socks5: None,
+            http: None,
+            direct: Some(DirectConfig {
+                bind_ipv4: Some("198.51.100.1".to_string()), // TEST-NET-2, never local
+                ..Default::default()
+            }),
+        };
+        let err = OutboundHandler::from_entry(&entry).unwrap_err();
+        assert!(
+            err.to_string().contains("FATAL") && err.to_string().contains("bindIPv4"),
+            "Expected startup bind validation error, got: {}",
+            err
+        );
+    }
+
+    #[test]
+    fn test_direct_bind_ipv4_loopback_ok() {
+        let entry = OutboundEntry {
+            name: "direct".to_string(),
+            outbound_type: "direct".to_string(),
+            socks5: None,
+            http: None,
+            direct: Some(DirectConfig {
+                bind_ipv4: Some("127.0.0.1".to_string()),
+                ..Default::default()
+            }),
+        };
+        let handler = OutboundHandler::from_entry(&entry).unwrap();
+        assert!(matches!(handler, OutboundHandler::Direct(_)));
+    }
+
+    #[test]
+    fn test_direct_bind_ipv6_unreachable_rejected() {
+        let entry = OutboundEntry {
+            name: "direct".to_string(),
+            outbound_type: "direct".to_string(),
+            socks5: None,
+            http: None,
+            direct: Some(DirectConfig {
+                bind_ipv6: Some("2001:db8::1".to_string()), // Documentation prefix, never local
+                ..Default::default()
+            }),
+        };
+        let err = OutboundHandler::from_entry(&entry).unwrap_err();
+        assert!(
+            err.to_string().contains("FATAL") && err.to_string().contains("bindIPv6"),
+            "Expected startup bind validation error, got: {}",
+            err
+        );
+    }
+
+    #[test]
+    fn test_direct_bind_ipv6_loopback_ok() {
+        let entry = OutboundEntry {
+            name: "direct".to_string(),
+            outbound_type: "direct".to_string(),
+            socks5: None,
+            http: None,
+            direct: Some(DirectConfig {
+                bind_ipv6: Some("::1".to_string()),
+                ..Default::default()
+            }),
+        };
+        let handler = OutboundHandler::from_entry(&entry).unwrap();
+        assert!(matches!(handler, OutboundHandler::Direct(_)));
+    }
+
+    #[test]
+    fn test_direct_bind_device_exclusive_with_bind_ipv6() {
+        let entry = OutboundEntry {
+            name: "direct".to_string(),
+            outbound_type: "direct".to_string(),
+            socks5: None,
+            http: None,
+            direct: Some(DirectConfig {
+                bind_ipv6: Some("::1".to_string()),
+                bind_device: Some("eth0".to_string()),
+                ..Default::default()
+            }),
+        };
+        // Must fail: either mutual exclusion (Linux) or platform not supported (non-Linux)
+        let err = OutboundHandler::from_entry(&entry).unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.contains("mutually exclusive")
+                || msg.contains("bind_device")
+                || msg.contains("only supported on Linux"),
+            "Expected device-related error, got: {}",
+            msg
+        );
+    }
+
+    #[test]
+    fn test_direct_bind_device_rejected_on_non_linux() {
+        let entry = OutboundEntry {
+            name: "direct".to_string(),
+            outbound_type: "direct".to_string(),
+            socks5: None,
+            http: None,
+            direct: Some(DirectConfig {
+                bind_device: Some("lo0".to_string()),
+                ..Default::default()
+            }),
+        };
+        if cfg!(target_os = "linux") {
+            // On Linux: may succeed or fail depending on permissions/device,
+            // but should not fail with "only supported on Linux"
+            let result = OutboundHandler::from_entry(&entry);
+            if let Err(ref e) = result {
+                assert!(
+                    !e.to_string().contains("only supported on Linux"),
+                    "Should not get platform error on Linux, got: {}",
+                    e
+                );
+            }
+        } else {
+            // On non-Linux: should fail with platform error
+            let err = OutboundHandler::from_entry(&entry).unwrap_err();
+            assert!(
+                err.to_string().contains("only supported on Linux"),
+                "Expected platform error, got: {}",
+                err
+            );
+        }
+    }
+
+    #[test]
+    fn test_direct_with_fast_open() {
+        let entry = OutboundEntry {
+            name: "direct".to_string(),
+            outbound_type: "direct".to_string(),
+            socks5: None,
+            http: None,
+            direct: Some(DirectConfig {
+                fast_open: true,
+                ..Default::default()
+            }),
+        };
+        let handler = OutboundHandler::from_entry(&entry).unwrap();
+        assert!(matches!(handler, OutboundHandler::Direct(_)));
+    }
+
+    #[test]
+    fn test_direct_config_yaml_camel_case() {
+        let yaml = r#"
+outbounds:
+  - name: direct
+    type: direct
+    direct:
+      mode: "4"
+      bindIPv4: "127.0.0.1"
+      fastOpen: true
+acl:
+  inline:
+    - direct(all)
+"#;
+        let config: AclConfig = serde_yaml::from_str(yaml).unwrap();
+        let direct_cfg = config.outbounds[0].direct.as_ref().unwrap();
+        assert_eq!(direct_cfg.mode, "4");
+        assert_eq!(direct_cfg.bind_ipv4.as_deref(), Some("127.0.0.1"));
+        assert_eq!(direct_cfg.fast_open, true);
+        assert!(direct_cfg.bind_ipv6.is_none());
+        assert!(direct_cfg.bind_device.is_none());
+    }
+
+    #[test]
+    fn test_direct_config_yaml_all_options() {
+        let yaml = r#"
+outbounds:
+  - name: direct
+    type: direct
+    direct:
+      mode: prefer4
+      bindIPv4: "10.0.0.1"
+      bindIPv6: "::1"
+      fastOpen: false
+acl:
+  inline:
+    - direct(all)
+"#;
+        let config: AclConfig = serde_yaml::from_str(yaml).unwrap();
+        let direct_cfg = config.outbounds[0].direct.as_ref().unwrap();
+        assert_eq!(direct_cfg.mode, "prefer4");
+        assert_eq!(direct_cfg.bind_ipv4.as_deref(), Some("10.0.0.1"));
+        assert_eq!(direct_cfg.bind_ipv6.as_deref(), Some("::1"));
+        assert_eq!(direct_cfg.fast_open, false);
+    }
+
+    #[test]
+    fn test_direct_config_default_values() {
+        // Minimal YAML: only mode should default to "auto", rest None/false
+        let yaml = r#"
+outbounds:
+  - name: direct
+    type: direct
+    direct: {}
+acl:
+  inline:
+    - direct(all)
+"#;
+        let config: AclConfig = serde_yaml::from_str(yaml).unwrap();
+        let direct_cfg = config.outbounds[0].direct.as_ref().unwrap();
+        assert_eq!(direct_cfg.mode, "auto");
+        assert!(direct_cfg.bind_ipv4.is_none());
+        assert!(direct_cfg.bind_ipv6.is_none());
+        assert!(direct_cfg.bind_device.is_none());
+        assert_eq!(direct_cfg.fast_open, false);
     }
 
     #[test]
@@ -1150,7 +1604,7 @@ acl:
         let result = router.route(&addr).await;
         assert!(matches!(
             result,
-            crate::core::hooks::OutboundType::Direct(_)
+            crate::core::hooks::OutboundType::Direct { .. }
         ));
     }
 
@@ -1186,7 +1640,7 @@ acl:
         let result = router.route(&addr).await;
         assert!(matches!(
             result,
-            crate::core::hooks::OutboundType::Direct(_)
+            crate::core::hooks::OutboundType::Direct { .. }
         ));
     }
 }

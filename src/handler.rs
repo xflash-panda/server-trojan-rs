@@ -200,7 +200,9 @@ async fn handle_connect(
 
     // Connect based on outbound type
     match outbound_type {
-        hooks::OutboundType::Direct(resolved) => handle_direct_connect(ctx, resolved).await,
+        hooks::OutboundType::Direct { resolved, handler } => {
+            handle_direct_connect(ctx, resolved, handler).await
+        }
         hooks::OutboundType::Proxy(handler) => handle_proxy_connect(ctx, handler).await,
         hooks::OutboundType::Reject => Ok(()), // Already handled above
     }
@@ -283,14 +285,47 @@ impl<'a> ConnectContext<'a> {
 async fn handle_direct_connect(
     ctx: ConnectContext<'_>,
     resolved: Option<std::net::SocketAddr>,
+    handler: Option<Arc<acl::OutboundHandler>>,
 ) -> Result<()> {
-    // Use pre-resolved address from SSRF check when available, avoiding redundant DNS
+    // When handler is present (ACL configured), use it for bind/fastOpen support
+    if let Some(handler) = handler {
+        use acl::{Addr as AclAddr, AsyncOutbound};
+
+        let mut acl_addr = if let Some(addr) = resolved {
+            // Pass pre-resolved address to avoid redundant DNS
+            AclAddr::from_socket_addr(addr)
+        } else {
+            AclAddr::new(ctx.target.host().into_owned(), ctx.target.port())
+        };
+
+        // Connect via handler (respects bind/fastOpen options)
+        let remote_stream = match tokio::time::timeout(
+            ctx.server.conn_config.connect_timeout,
+            handler.dial_tcp(&mut acl_addr),
+        )
+        .await
+        {
+            Ok(Ok(stream)) => stream,
+            Ok(Err(e)) => {
+                log::debug!(peer = %ctx.peer_addr, target = %ctx.target, error = %e, "Direct connect failed");
+                return Err(anyhow!("Direct connect failed: {}", e));
+            }
+            Err(_) => {
+                log::debug!(peer = %ctx.peer_addr, target = %ctx.target, "Direct connect timeout");
+                return Err(anyhow!("Direct connect timeout"));
+            }
+        };
+
+        log::debug!(peer = %ctx.peer_addr, target = %ctx.target, handler = ?handler, "Connected to remote (direct)");
+        return ctx.relay(remote_stream).await;
+    }
+
+    // Fast path: no ACL handler, use simple TcpStream::connect with keepalive/nodelay
     let remote_addr = match resolved {
         Some(addr) => addr,
         None => ctx.target.to_socket_addr().await?,
     };
 
-    // Connect with timeout
     let remote_stream = match tokio::time::timeout(
         ctx.server.conn_config.connect_timeout,
         TcpStream::connect(remote_addr),
@@ -438,7 +473,7 @@ async fn handle_udp_associate(
                                     let result = server.router.route(&packet.addr).await;
                                     // Pre-compute the AclAddr for write_to() once per unique target
                                     let acl_addr = match &result {
-                                        hooks::OutboundType::Direct(Some(addr)) => {
+                                        hooks::OutboundType::Direct { resolved: Some(addr), .. } => {
                                             AclAddr::new(addr.ip().to_string(), addr.port())
                                         }
                                         _ => AclAddr::new(packet.addr.host().into_owned(), packet.addr.port()),
@@ -458,7 +493,7 @@ async fn handle_udp_associate(
                                     log::debug!(peer = %peer_addr, target = %packet.addr, "UDP packet rejected by router");
                                     continue;
                                 }
-                                hooks::OutboundType::Direct(_) => {
+                                hooks::OutboundType::Direct { handler, .. } => {
                                     // For direct, we need to create a UDP connection if not exists
                                     if udp_conn.is_none() || current_handler.is_some() {
                                         // Explicitly drop old connection to release resources
@@ -467,10 +502,18 @@ async fn handle_udp_associate(
                                         }
                                         current_handler = None;
 
-                                        let direct = acl::Direct::new();
+                                        // Use ACL handler if available (respects bind options),
+                                        // otherwise fall back to default Direct
+                                        let dial_handler: Arc<acl::OutboundHandler> = handler
+                                            .clone()
+                                            .unwrap_or_else(|| {
+                                                Arc::new(acl::OutboundHandler::Direct(
+                                                    Arc::new(acl::Direct::new()),
+                                                ))
+                                            });
                                         // Reuse cached AclAddr (avoids per-packet String allocation)
                                         let mut dial_addr = send_addr.clone();
-                                        match direct.dial_udp(&mut dial_addr).await {
+                                        match dial_handler.dial_udp(&mut dial_addr).await {
                                             Ok(conn) => {
                                                 udp_conn = Some(conn);
                                             }
