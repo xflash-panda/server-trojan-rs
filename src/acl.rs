@@ -1131,7 +1131,7 @@ acl:
         let direct_cfg = config.outbounds[0].direct.as_ref().unwrap();
         assert_eq!(direct_cfg.mode, "4");
         assert_eq!(direct_cfg.bind_ipv4.as_deref(), Some("127.0.0.1"));
-        assert_eq!(direct_cfg.fast_open, true);
+        assert!(direct_cfg.fast_open);
         assert!(direct_cfg.bind_ipv6.is_none());
         assert!(direct_cfg.bind_device.is_none());
     }
@@ -1156,7 +1156,7 @@ acl:
         assert_eq!(direct_cfg.mode, "prefer4");
         assert_eq!(direct_cfg.bind_ipv4.as_deref(), Some("10.0.0.1"));
         assert_eq!(direct_cfg.bind_ipv6.as_deref(), Some("::1"));
-        assert_eq!(direct_cfg.fast_open, false);
+        assert!(!direct_cfg.fast_open);
     }
 
     #[test]
@@ -1177,7 +1177,7 @@ acl:
         assert!(direct_cfg.bind_ipv4.is_none());
         assert!(direct_cfg.bind_ipv6.is_none());
         assert!(direct_cfg.bind_device.is_none());
-        assert_eq!(direct_cfg.fast_open, false);
+        assert!(!direct_cfg.fast_open);
     }
 
     #[test]
