@@ -43,7 +43,11 @@ pub enum OutboundType {
     /// Direct connection, optionally with a pre-resolved address to skip redundant DNS.
     /// When the router already resolved the domain (e.g. for SSRF checking), it passes
     /// the result here so the handler can reuse it instead of resolving again.
-    Direct(Option<SocketAddr>),
+    /// The handler is passed when ACL is configured so bind/fastOpen options are respected.
+    Direct {
+        resolved: Option<SocketAddr>,
+        handler: Option<std::sync::Arc<crate::acl::OutboundHandler>>,
+    },
     /// Reject connection
     Reject,
     /// Proxy connection via ACL engine outbound handler
@@ -53,8 +57,17 @@ pub enum OutboundType {
 impl std::fmt::Debug for OutboundType {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            OutboundType::Direct(None) => write!(f, "Direct"),
-            OutboundType::Direct(Some(addr)) => write!(f, "Direct({})", addr),
+            OutboundType::Direct {
+                resolved: None,
+                handler: None,
+            } => write!(f, "Direct"),
+            OutboundType::Direct {
+                resolved: Some(addr),
+                ..
+            } => write!(f, "Direct({})", addr),
+            OutboundType::Direct {
+                handler: Some(h), ..
+            } => write!(f, "Direct({:?})", h),
             OutboundType::Reject => write!(f, "Reject"),
             OutboundType::Proxy(handler) => write!(f, "Proxy({:?})", handler),
         }
@@ -95,9 +108,15 @@ impl OutboundRouter for DirectRouter {
             if is_private {
                 return OutboundType::Reject;
             }
-            return OutboundType::Direct(resolved);
+            return OutboundType::Direct {
+                resolved,
+                handler: None,
+            };
         }
-        OutboundType::Direct(None)
+        OutboundType::Direct {
+            resolved: None,
+            handler: None,
+        }
     }
 }
 
@@ -154,7 +173,7 @@ mod tests {
         let router = DirectRouter::new();
         let addr = Address::Domain("example.com".to_string(), 80);
         let result = router.route(&addr).await;
-        assert!(matches!(result, OutboundType::Direct(_)));
+        assert!(matches!(result, OutboundType::Direct { .. }));
     }
 
     #[tokio::test]
@@ -185,7 +204,13 @@ mod tests {
         let router = DirectRouter::new();
         let addr = Address::IPv4([8, 8, 8, 8], 80);
         let result = router.route(&addr).await;
-        assert!(matches!(result, OutboundType::Direct(None)));
+        assert!(matches!(
+            result,
+            OutboundType::Direct {
+                resolved: None,
+                handler: None
+            }
+        ));
     }
 
     #[tokio::test]
@@ -193,7 +218,13 @@ mod tests {
         let router = DirectRouter::with_block_private_ip(false);
         let addr = Address::IPv4([127, 0, 0, 1], 80);
         let result = router.route(&addr).await;
-        assert!(matches!(result, OutboundType::Direct(None)));
+        assert!(matches!(
+            result,
+            OutboundType::Direct {
+                resolved: None,
+                handler: None
+            }
+        ));
     }
 
     #[tokio::test]
