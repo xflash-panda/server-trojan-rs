@@ -4,8 +4,8 @@ version = 4
 
 [[package]]
 name = "acl-engine-r"
-version = "0.4.0"
-source = "git+https://github.com/xflash-panda/acl-engine-r.git?tag=v0.4.0#869bf8b25f5436a4581f70c99fbf39e56dab3665"
+version = "0.4.1"
+source = "git+https://github.com/xflash-panda/acl-engine-r.git?tag=v0.4.1#f879ae9069287adcce158d4c7869aa0d41e67875"
 dependencies = [
  "async-trait",
  "base64",
@@ -1753,7 +1753,7 @@ dependencies = [
 
 [[package]]
 name = "server-trojan-r"
-version = "0.2.14"
+version = "0.2.15"
 dependencies = [
  "acl-engine-r",
  "anyhow",

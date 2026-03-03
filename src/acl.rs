@@ -153,10 +153,26 @@ pub struct DirectConfig {
     /// Enable TCP Fast Open for outgoing connections (Linux/macOS)
     #[serde(rename = "fastOpen", default)]
     pub fast_open: bool,
+
+    /// Enable TCP_NODELAY (disable Nagle's algorithm). Default: true.
+    #[serde(rename = "tcpNoDelay", default = "default_tcp_nodelay")]
+    pub tcp_nodelay: bool,
+
+    /// TCP keepalive interval in seconds. 0 = disable. Default: 60.
+    #[serde(rename = "tcpKeepAlive", default = "default_tcp_keepalive_secs")]
+    pub tcp_keepalive_secs: u64,
 }
 
 fn default_ip_mode() -> String {
     "auto".to_string()
+}
+
+fn default_tcp_nodelay() -> bool {
+    true
+}
+
+fn default_tcp_keepalive_secs() -> u64 {
+    60
 }
 
 impl Default for DirectConfig {
@@ -167,6 +183,8 @@ impl Default for DirectConfig {
             bind_ipv6: None,
             bind_device: None,
             fast_open: false,
+            tcp_nodelay: default_tcp_nodelay(),
+            tcp_keepalive_secs: default_tcp_keepalive_secs(),
         }
     }
 }
@@ -235,6 +253,17 @@ impl OutboundHandler {
                     .transpose()?;
                 let bind_device = config.and_then(|d| d.bind_device.clone());
                 let fast_open = config.is_some_and(|d| d.fast_open);
+                let tcp_nodelay = config
+                    .map(|d| d.tcp_nodelay)
+                    .unwrap_or_else(default_tcp_nodelay);
+                let tcp_keepalive_secs = config
+                    .map(|d| d.tcp_keepalive_secs)
+                    .unwrap_or_else(default_tcp_keepalive_secs);
+                let tcp_keepalive = if tcp_keepalive_secs > 0 {
+                    Some(std::time::Duration::from_secs(tcp_keepalive_secs))
+                } else {
+                    None
+                };
 
                 // Validate bind IPs at startup by trying to bind a test socket
                 if let Some(ip) = bind_ip4 {
@@ -308,6 +337,8 @@ impl OutboundHandler {
                     bind_device,
                     fast_open,
                     timeout: None,
+                    tcp_nodelay,
+                    tcp_keepalive,
                 };
                 let direct = Direct::with_options(opts)
                     .map_err(|e| anyhow!("Invalid direct outbound '{}': {}", entry.name, e))?;
@@ -325,6 +356,16 @@ impl OutboundHandler {
                 }
                 if fast_open {
                     parts.push("fastOpen=true".to_string());
+                }
+                if !tcp_nodelay {
+                    parts.push("tcpNoDelay=false".to_string());
+                }
+                if let Some(ka) = tcp_keepalive {
+                    if ka.as_secs() != 60 {
+                        parts.push(format!("tcpKeepAlive={}s", ka.as_secs()));
+                    }
+                } else {
+                    parts.push("tcpKeepAlive=off".to_string());
                 }
                 log::info!(
                     outbound = %entry.name,
