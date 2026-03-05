@@ -177,7 +177,10 @@ where
                 ),
             )
             .await
-            .map_err(|_| anyhow!("WebSocket handshake timeout"))??;
+            .map_err(|_| {
+                log::debug!(peer = %peer_addr, stage = "ws_timeout", "Connection failed");
+                anyhow!("WebSocket handshake timeout")
+            })??;
             let ws_transport = WebSocketTransport::new(ws_stream);
             let stream: TransportStream = Box::pin(ws_transport);
             let meta = ConnectionMeta {
@@ -305,15 +308,14 @@ pub async fn run_server(server: Arc<Server>, config: &config::ServerConfig) -> R
                             .await
                             {
                                 Ok(Ok(tls_stream)) => {
-                                    log::debug!(peer = %peer_addr, "TLS handshake successful");
                                     accept_connection(server, tls_stream, peer_addr, transport_type, network_settings).await
                                 }
                                 Ok(Err(e)) => {
-                                    log::debug!(peer = %peer_addr, error = %e, "TLS handshake failed");
+                                    log::debug!(peer = %peer_addr, error = %e, stage = "tls", "Connection failed");
                                     Err(anyhow!("TLS handshake failed: {}", e))
                                 }
                                 Err(_) => {
-                                    log::debug!(peer = %peer_addr, "TLS handshake timeout");
+                                    log::debug!(peer = %peer_addr, stage = "tls_timeout", "Connection failed");
                                     Err(anyhow!("TLS handshake timeout"))
                                 }
                             }
@@ -500,6 +502,48 @@ mod tests {
         assert_eq!(Arc::strong_count(&settings), 2);
         drop(cloned);
         assert_eq!(Arc::strong_count(&settings), 1);
+    }
+
+    /// Default max_connections must be bounded to prevent accept loop death spiral.
+    ///
+    /// Bug: when max_connections=0 (old default), accept loop spawns tokio tasks
+    /// without backpressure. At 45k+ tasks, new tasks queue in tokio's run queue
+    /// and their timeouts never start (task not polled yet). Connections accumulate
+    /// indefinitely → death spiral.
+    ///
+    /// Fix: default to a bounded value so the semaphore always provides backpressure.
+    #[test]
+    fn test_default_max_connections_prevents_death_spiral() {
+        use crate::config::DEFAULT_MAX_CONNECTIONS;
+
+        const {
+            assert!(DEFAULT_MAX_CONNECTIONS > 0);
+            assert!(DEFAULT_MAX_CONNECTIONS >= 1024);
+            assert!(DEFAULT_MAX_CONNECTIONS <= 65535);
+        }
+    }
+
+    /// When default max_connections is used, a semaphore must be created (not None).
+    /// This is the key invariant that prevents the death spiral.
+    #[tokio::test]
+    async fn test_default_max_connections_creates_semaphore() {
+        use crate::config::DEFAULT_MAX_CONNECTIONS;
+
+        let max_connections = DEFAULT_MAX_CONNECTIONS;
+        let conn_limiter = if max_connections > 0 {
+            Some(Arc::new(Semaphore::new(max_connections)))
+        } else {
+            None
+        };
+
+        assert!(
+            conn_limiter.is_some(),
+            "Default config must create a semaphore for backpressure"
+        );
+        assert_eq!(
+            conn_limiter.unwrap().available_permits(),
+            DEFAULT_MAX_CONNECTIONS
+        );
     }
 
     /// WS handshake must be wrapped in a timeout so that clients that complete

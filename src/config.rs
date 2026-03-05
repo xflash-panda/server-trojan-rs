@@ -140,11 +140,11 @@ pub struct CliArgs {
     #[arg(long, env = "X_PANDA_TROJAN_DOWNLINK_ONLY_TIMEOUT", default_value = "5s", value_parser = parse_duration, help_heading = "Performance")]
     pub downlink_only_timeout: Duration,
 
-    /// Maximum concurrent connections, 0 means unlimited (default: 0)
+    /// Maximum concurrent connections (default: 10000, 0 = unlimited)
     #[arg(
         long,
         env = "X_PANDA_TROJAN_MAX_CONNECTIONS",
-        default_value_t = 0,
+        default_value_t = DEFAULT_MAX_CONNECTIONS,
         help_heading = "Performance"
     )]
     pub max_connections: usize,
@@ -153,6 +153,15 @@ pub struct CliArgs {
     #[arg(long, env = "X_PANDA_TROJAN_REFRESH_GEODATA", default_value_t = false)]
     pub refresh_geodata: bool,
 }
+
+/// Default maximum concurrent connections.
+///
+/// Prevents accept loop death spiral: without a bound, `tokio::spawn` creates
+/// tasks faster than the runtime can poll them. At 45k+ tasks, new tasks sit in
+/// the run queue unpolled, their timeouts never start, and connections accumulate
+/// indefinitely. The semaphore pauses `accept()` when at capacity, letting the
+/// TCP SYN queue absorb bursts while existing tasks drain normally.
+pub const DEFAULT_MAX_CONNECTIONS: usize = 10_000;
 
 impl CliArgs {
     /// Parse CLI arguments
@@ -419,7 +428,7 @@ mod tests {
             buffer_size: 32 * 1024,
             tcp_backlog: 1024,
             tcp_nodelay: true,
-            max_connections: 0,
+            max_connections: DEFAULT_MAX_CONNECTIONS,
             block_private_ip: true,
             refresh_geodata: false,
         }
@@ -457,7 +466,7 @@ mod tests {
             buffer_size: 32 * 1024,
             tcp_backlog: 1024,
             tcp_nodelay: true,
-            max_connections: 0,
+            max_connections: DEFAULT_MAX_CONNECTIONS,
             refresh_geodata: false,
         };
         (cli, temp_dir)
@@ -872,7 +881,7 @@ mod tests {
     fn test_conn_config_from_cli_max_connections_default_unlimited() {
         let cli = create_test_cli_args();
         let config = ConnConfig::from_cli(&cli);
-        assert_eq!(config.max_connections, 0); // default: unlimited
+        assert_eq!(config.max_connections, DEFAULT_MAX_CONNECTIONS);
     }
 
     #[test]

@@ -100,7 +100,10 @@ pub async fn process_connection(
         read_trojan_request(&mut stream, &mut buf, buffer_size),
     )
     .await
-    .map_err(|_| anyhow!("Request read timeout"))??;
+    .map_err(|_| {
+        log::debug!(peer = %meta.peer_addr, stage = "request_timeout", "Connection failed");
+        anyhow!("Request read timeout")
+    })??;
 
     // Free request parsing buffer immediately — payload is an independent Bytes.
     // Saves 32KB per connection during the relay phase.
@@ -250,17 +253,32 @@ impl<'a> ConnectContext<'a> {
             Some((self.user_id, stats)),
         );
 
+        let relay_start = std::time::Instant::now();
         let cancelled = tokio::select! {
             result = relay_fut => {
+                let duration = relay_start.elapsed().as_secs();
                 match result {
-                    Ok(r) if r.completed => {
-                        log::trace!(peer = %self.peer_addr, up = r.a_to_b, down = r.b_to_a, "Relay completed");
-                    }
                     Ok(r) => {
-                        log::debug!(peer = %self.peer_addr, up = r.a_to_b, down = r.b_to_a, "Connection timeout");
+                        log::debug!(
+                            peer = %self.peer_addr,
+                            target = %self.target,
+                            up = r.a_to_b,
+                            down = r.b_to_a,
+                            duration_secs = duration,
+                            termination = %r.termination,
+                            client_eof = r.client_eof,
+                            remote_eof = r.remote_eof,
+                            "Relay done"
+                        );
                     }
                     Err(e) => {
-                        log::debug!(peer = %self.peer_addr, error = %e, "Relay error");
+                        log::debug!(
+                            peer = %self.peer_addr,
+                            target = %self.target,
+                            duration_secs = duration,
+                            error = %e,
+                            "Relay error"
+                        );
                     }
                 }
                 false
