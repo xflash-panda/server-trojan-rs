@@ -92,15 +92,24 @@ impl BackgroundTasksHandle {
     /// Gracefully shutdown all background tasks
     pub async fn shutdown(self) {
         log::info!("Stopping background tasks...");
-        let _ = self.shutdown_tx.send(true);
+        let BackgroundTasksHandle {
+            shutdown_tx,
+            handles,
+            _runtime: runtime,
+        } = self;
+        let _ = shutdown_tx.send(true);
 
-        for (i, handle) in self.handles.into_iter().enumerate() {
+        for (i, handle) in handles.into_iter().enumerate() {
             match tokio::time::timeout(Duration::from_secs(5), handle).await {
                 Ok(Ok(())) => log::debug!(task = i, "Background task stopped"),
                 Ok(Err(e)) => log::warn!(task = i, error = %e, "Background task panicked"),
                 Err(_) => log::warn!(task = i, "Background task shutdown timeout"),
             }
         }
+
+        // Consume the runtime without blocking. Runtime::drop() calls block_on()
+        // internally, which panics when called from within an async context.
+        runtime.shutdown_background();
 
         log::info!("Background tasks stopped");
     }
@@ -383,6 +392,40 @@ mod tests {
         });
 
         assert_eq!(counter.load(Ordering::Relaxed), 1);
+    }
+
+    /// Regression: BackgroundTasksHandle::shutdown() is async and runs on the
+    /// main tokio runtime. When it returns, self._runtime (the dedicated bg
+    /// Runtime) is dropped. Runtime::drop() calls block_on() internally, which
+    /// panics inside an async context ("Cannot drop a runtime in a context
+    /// where blocking is not allowed").
+    #[tokio::test]
+    async fn test_shutdown_does_not_panic_when_tasks_timeout() {
+        let runtime = tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(1)
+            .thread_name("test-bg")
+            .enable_all()
+            .build()
+            .unwrap();
+
+        // Spawn a task that never finishes (simulates stuck gRPC heartbeat)
+        let handle = runtime.spawn(async {
+            loop {
+                tokio::time::sleep(Duration::from_secs(3600)).await;
+            }
+        });
+
+        let (shutdown_tx, _) = watch::channel(false);
+
+        let bg_handle = BackgroundTasksHandle {
+            shutdown_tx,
+            handles: vec![handle],
+            _runtime: runtime,
+        };
+
+        // This should NOT panic — but currently it does because Runtime is
+        // dropped inside this async context after shutdown() returns.
+        bg_handle.shutdown().await;
     }
 
     #[test]
