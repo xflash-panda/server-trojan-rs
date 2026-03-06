@@ -160,6 +160,7 @@ where
                 server.conn_config.request_timeout,
                 tokio_tungstenite::accept_hdr_async_with_config(
                     stream,
+                    #[allow(clippy::result_large_err)] // Err type fixed by tungstenite Callback trait
                     move |req: &Request, response: Response| {
                         let path = req.uri().path();
                         // For "/" or empty path, accept any path (Xray behavior)
