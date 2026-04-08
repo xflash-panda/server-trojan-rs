@@ -196,16 +196,18 @@ async fn main() -> Result<()> {
 
     // Wait for shutdown handler to complete and get api_manager
     if let Ok(api_for_shutdown) = shutdown_handle.await {
-        // Shutdown background tasks after drain (final traffic report includes drained traffic)
-        background_handle.shutdown().await;
-
-        // Unregister node
+        // Unregister node first — this must complete before supervisor sends SIGKILL.
+        // Background tasks shutdown can take up to 15s (3 tasks × 5s timeout each),
+        // so unregister before that to stay within supervisor's stopwaitsecs.
         log::info!("Unregistering node...");
         if let Err(e) = api_for_shutdown.unregister().await {
             log::warn!(error = %e, "Failed to unregister node");
         } else {
             log::info!("Node unregistered successfully");
         }
+
+        // Shutdown background tasks last (final traffic report includes drained traffic)
+        background_handle.shutdown().await;
     }
 
     log::info!("Shutdown complete");
