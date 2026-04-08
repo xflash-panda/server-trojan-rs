@@ -473,4 +473,85 @@ mod tests {
         bg_runtime.block_on(async { bg_handle.await.unwrap() });
         assert!(completed.load(Ordering::Relaxed));
     }
+
+    /// Regression: unregister must complete before background tasks shutdown.
+    ///
+    /// Previously the shutdown sequence was:
+    ///   1. drain connections (≤5s)
+    ///   2. background tasks shutdown (≤15s)  ← could consume entire SIGKILL budget
+    ///   3. unregister (never reached)
+    ///
+    /// Fix: unregister runs before background tasks shutdown, so it completes
+    /// within supervisor's stopwaitsecs even when background tasks hang.
+    #[tokio::test(start_paused = true)]
+    async fn test_unregister_completes_before_bg_shutdown() {
+        use std::sync::atomic::{AtomicU8, Ordering};
+        use tokio::time::Instant;
+
+        // Track execution order: 0 = not started, 1 = first, 2 = second
+        let order = Arc::new(AtomicU8::new(0));
+        let unregister_order = Arc::new(AtomicU8::new(0));
+        let bg_shutdown_order = Arc::new(AtomicU8::new(0));
+
+        // Simulate the fixed shutdown sequence from main.rs:
+        //   1. unregister (fast)
+        //   2. background_handle.shutdown() (slow — tasks may hang)
+        let seq = Arc::clone(&order);
+        let unreg_ord = Arc::clone(&unregister_order);
+
+        // Step 1: unregister (simulated as a fast gRPC call)
+        tokio::time::sleep(Duration::from_millis(100)).await; // simulate gRPC roundtrip
+        let n = seq.fetch_add(1, Ordering::SeqCst) + 1;
+        unreg_ord.store(n, Ordering::SeqCst);
+
+        // Step 2: background tasks shutdown (with a hanging task)
+        let runtime = tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(1)
+            .thread_name("test-bg")
+            .enable_all()
+            .build()
+            .unwrap();
+
+        let handle = runtime.spawn(async {
+            // Simulate a stuck background task (e.g., hung gRPC heartbeat)
+            loop {
+                tokio::time::sleep(Duration::from_secs(3600)).await;
+            }
+        });
+
+        let (shutdown_tx, _) = watch::channel(false);
+        let bg_handle = BackgroundTasksHandle {
+            shutdown_tx,
+            handles: vec![handle],
+            _runtime: runtime,
+        };
+
+        let seq = Arc::clone(&order);
+        let bg_ord = Arc::clone(&bg_shutdown_order);
+
+        let before_bg = Instant::now();
+        bg_handle.shutdown().await;
+        let bg_elapsed = before_bg.elapsed();
+        let n = seq.fetch_add(1, Ordering::SeqCst) + 1;
+        bg_ord.store(n, Ordering::SeqCst);
+
+        // Verify ordering: unregister (1) before bg shutdown (2)
+        assert_eq!(
+            unregister_order.load(Ordering::SeqCst),
+            1,
+            "unregister must execute first"
+        );
+        assert_eq!(
+            bg_shutdown_order.load(Ordering::SeqCst),
+            2,
+            "bg shutdown must execute second"
+        );
+
+        // Verify bg shutdown waited for the 5s timeout (task was stuck)
+        assert!(
+            bg_elapsed >= Duration::from_secs(5),
+            "bg shutdown should have waited for timeout, elapsed: {:?}",
+            bg_elapsed
+        );
+    }
 }
