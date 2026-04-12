@@ -51,7 +51,7 @@ path = "src/main.rs"
 
 [dev-dependencies]
 tokio-test = "0.4"
-tempfile = "3.15"
+tempfile = "3.27"
 
 [profile.release]
 opt-level = 3
