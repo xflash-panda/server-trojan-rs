@@ -21,7 +21,9 @@ serde = { version = "1.0", features = ["derive"] }
 serde_json = "1"
 serde_yaml = "0.9"
 toml = "1.0"
-connectrpc = "0.3"
+connectrpc = { version = "0.3", features = ["client"] }
+connect-rust-h3 = { git = "https://github.com/xflash-panda/connect-rust-h3", tag = "v0.2.0" }
+http-body = "1"
 h2 = "0.4.13"
 http = "1.4.0"
 thiserror = "2.0"
