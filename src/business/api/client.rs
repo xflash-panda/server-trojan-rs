@@ -1,7 +1,7 @@
 //! API client for remote panel communication
 
 use anyhow::{anyhow, Result};
-use server_r_client::{
+use server_client_rs::{
     ApiClient, ApiError, Config as ApiConfig, NodeType, RegisterRequest, TrojanConfig, UserTraffic,
 };
 use std::path::PathBuf;
