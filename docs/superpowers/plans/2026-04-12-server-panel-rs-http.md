@@ -154,7 +154,8 @@ pub use client::ApiManager;
 pub use user_manager::{UserManager, UserDiff};
 pub use stats::{StatsCollector, UserStatsSnapshot};
 pub use tasks::{BackgroundTasks, BackgroundTasksHandle, TaskConfig};
-pub use server_client_rs::NodeType;
+// Re-export server-client-rs 类型，消费者无需直接依赖 server-client-rs
+pub use server_client_rs::{NodeConfigEnum, NodeType, TrojanConfig};
 
 /// SHA224 密码转 56 字节 hex
 pub fn password_to_hex(password: &str) -> [u8; 56] { ... }
@@ -170,8 +171,7 @@ pub fn password_to_hex(password: &str) -> [u8; 56] { ... }
 
 **Cargo.toml 变更：**
 - 新增 `server-panel-rs` path 依赖
-- 移除 `hostname`、`scopeguard`（被 panel 内部消化）
-- 保留 `server-client-rs`（仍需 `TrojanConfig` 等类型）
+- 移除 `hostname`、`scopeguard`、`server-client-rs`（均由 panel re-export 或内部消化）
 
 **business/ 模块精简为薄包装：**
 
