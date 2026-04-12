@@ -1,8 +1,8 @@
 //! gRPC API client for remote panel communication (Agent version)
 
 use anyhow::{anyhow, Result};
-use connectrpc::client::{ClientConfig, Http2Connection, SharedHttp2Connection};
-use connectrpc::Protocol;
+use connect_rust_h3::H3TransportBuilder;
+use connectrpc::client::{ClientConfig, ServiceTransport};
 use serde::{Deserialize, Serialize};
 use server_agent_proto_rs::{
     AgentClient, ConfigRequest, HeartbeatRequest, NodeType as GrpcNodeType,
@@ -95,9 +95,9 @@ impl TrafficStats {
 /// Configuration for the panel service
 #[derive(Debug, Clone)]
 pub struct PanelConfig {
-    /// gRPC server host (e.g., "127.0.0.1")
+    /// Panel server host (e.g., "127.0.0.1")
     pub server_host: String,
-    /// gRPC server port (e.g., 8082)
+    /// Panel server port (e.g., 8082)
     pub server_port: u16,
     /// Node ID for this server
     pub node_id: u32,
@@ -105,17 +105,27 @@ pub struct PanelConfig {
     pub data_dir: PathBuf,
     /// API request timeout
     pub api_timeout: Duration,
+    /// TLS server name (SNI) for panel connection
+    pub server_name: String,
+    /// CA certificate path (None = use system trust store)
+    pub ca_cert_path: Option<String>,
 }
 
 impl PanelConfig {
     /// Create PanelConfig from CLI args
     pub fn from_cli(cli: &CliArgs) -> Self {
+        let server_name = cli
+            .server_name
+            .clone()
+            .unwrap_or_else(|| cli.server_host.clone());
         Self {
             server_host: cli.server_host.clone(),
             server_port: cli.port,
             node_id: cli.node,
             data_dir: cli.data_dir.clone(),
             api_timeout: cli.api_timeout,
+            server_name,
+            ca_cert_path: cli.ca_cert_path.clone(),
         }
     }
 }
@@ -126,9 +136,11 @@ fn get_hostname() -> String {
         .unwrap_or_else(|_| "unknown".to_string())
 }
 
+type PanelClient = AgentClient<ServiceTransport<connect_rust_h3::H3Transport>>;
+
 /// API manager for handling all remote panel operations via gRPC
 pub struct ApiManager {
-    client: RwLock<Option<AgentClient<SharedHttp2Connection>>>,
+    client: RwLock<Option<PanelClient>>,
     config: PanelConfig,
     register_id: RwLock<Option<String>>,
 }
@@ -145,40 +157,52 @@ impl ApiManager {
         })
     }
 
-    /// Connect to the gRPC server
-    async fn connect(&self) -> Result<AgentClient<SharedHttp2Connection>> {
-        let endpoint = format!(
-            "http://{}:{}",
-            self.config.server_host, self.config.server_port
-        );
-        let timeout = self.config.api_timeout;
+    /// Connect to the panel via QUIC/H3
+    async fn connect(&self) -> Result<PanelClient> {
+        let host_port = format!("{}:{}", self.config.server_host, self.config.server_port);
         log::info!(
-            endpoint = %endpoint,
-            timeout_secs = timeout.as_secs(),
-            "Connecting to gRPC server"
+            host_port = %host_port,
+            server_name = %self.config.server_name,
+            ca_cert_path = ?self.config.ca_cert_path,
+            "Connecting to panel via QUIC/H3"
         );
 
-        let uri: http::Uri = endpoint
-            .parse()
-            .map_err(|e| anyhow!("Invalid endpoint URI: {}", e))?;
-
-        let conn = Http2Connection::connect_plaintext(uri.clone())
+        let addr = tokio::net::lookup_host(&host_port)
             .await
-            .map_err(|e| anyhow!("Failed to connect to gRPC server {}: {}", endpoint, e))?;
+            .map_err(|e| anyhow!("Failed to resolve {}: {}", host_port, e))?
+            .next()
+            .ok_or_else(|| anyhow!("Failed to resolve {}", host_port))?;
 
-        let shared = conn.shared(1024);
+        let mut builder = H3TransportBuilder::new()
+            .server_name(&self.config.server_name)
+            .keep_alive(Duration::from_secs(15));
+        if let Some(ref ca) = self.config.ca_cert_path {
+            builder = builder.ca_cert_path(ca);
+        }
 
-        let config = ClientConfig::new(uri)
-            .protocol(Protocol::Grpc)
-            .default_timeout(timeout);
+        let transport = builder
+            .build(addr)
+            .await
+            .map_err(|e| anyhow!("Failed to build H3 transport to {}: {}", host_port, e))?;
 
-        let client = AgentClient::new(shared, config);
-        log::info!("Connected to gRPC server");
+        let base_url = format!(
+            "https://{}:{}",
+            self.config.server_name, self.config.server_port
+        );
+        let config = ClientConfig::new(
+            base_url
+                .parse()
+                .map_err(|e| anyhow!("Invalid base URL {}: {}", base_url, e))?,
+        )
+        .default_timeout(self.config.api_timeout);
+
+        let client = AgentClient::new(ServiceTransport::new(transport), config);
+        log::info!("Connected to panel via QUIC/H3");
         Ok(client)
     }
 
-    /// Get or create gRPC client
-    async fn get_client(&self) -> Result<AgentClient<SharedHttp2Connection>> {
+    /// Get or create panel client
+    async fn get_client(&self) -> Result<PanelClient> {
         let client_guard = self.client.read().await;
         if let Some(client) = client_guard.clone() {
             return Ok(client);

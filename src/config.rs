@@ -85,6 +85,22 @@ pub struct CliArgs {
     #[arg(long = "api_timeout", env = "X_PANDA_TROJAN_API_TIMEOUT", default_value = "15s", value_parser = parse_duration)]
     pub api_timeout: Duration,
 
+    /// TLS server name (SNI) for panel connection (defaults to --server_host)
+    #[arg(
+        long = "server_name",
+        env = "X_PANDA_TROJAN_SERVER_NAME",
+        value_name = "NAME"
+    )]
+    pub server_name: Option<String>,
+
+    /// CA certificate path for panel TLS (omit for system trust store)
+    #[arg(
+        long = "ca_cert_path",
+        env = "X_PANDA_TROJAN_CA_CERT_PATH",
+        value_name = "PATH"
+    )]
+    pub ca_cert_path: Option<String>,
+
     /// Log mode: debug, info, warn, error (default: info)
     #[arg(long, env = "X_PANDA_TROJAN_LOG_MODE", default_value = "info")]
     pub log_mode: String,
@@ -435,6 +451,8 @@ mod tests {
             max_connections: 0,
             block_private_ip: true,
             refresh_geodata: false,
+            server_name: None,
+            ca_cert_path: None,
         }
     }
 
@@ -472,6 +490,8 @@ mod tests {
             uplink_only_timeout: Duration::from_secs(2),
             downlink_only_timeout: Duration::from_secs(5),
             max_connections: 0,
+            server_name: None,
+            ca_cert_path: None,
         };
         (cli, temp_dir)
     }
