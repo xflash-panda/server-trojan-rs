@@ -245,8 +245,8 @@ pub struct User {
     pub uuid: String,
 }
 
-impl From<server_r_client::User> for User {
-    fn from(u: server_r_client::User) -> Self {
+impl From<server_client_rs::User> for User {
+    fn from(u: server_client_rs::User) -> Self {
         Self {
             id: u.id,
             uuid: u.uuid,
@@ -356,7 +356,7 @@ pub struct ServerConfig {
 
 impl ServerConfig {
     /// Build ServerConfig from remote TrojanConfig and CLI args
-    pub fn from_remote(remote: &server_r_client::TrojanConfig, cli: &CliArgs) -> Result<Self> {
+    pub fn from_remote(remote: &server_client_rs::TrojanConfig, cli: &CliArgs) -> Result<Self> {
         // Determine transport mode from remote config
         let network = remote.network.as_deref().unwrap_or("tcp");
         let (enable_ws, enable_grpc) = match network.to_lowercase().as_str() {
@@ -587,7 +587,7 @@ mod tests {
 
     #[test]
     fn test_user_from_remote() {
-        let remote_user = server_r_client::User {
+        let remote_user = server_client_rs::User {
             id: 42,
             uuid: "test-uuid-123".to_string(),
         };
@@ -609,7 +609,7 @@ mod tests {
 
     #[test]
     fn test_server_config_from_remote_tcp() {
-        let remote = server_r_client::TrojanConfig {
+        let remote = server_client_rs::TrojanConfig {
             id: 1,
             server_port: 443,
             allow_insecure: false,
@@ -628,7 +628,7 @@ mod tests {
 
     #[test]
     fn test_server_config_from_remote_websocket() {
-        let remote = server_r_client::TrojanConfig {
+        let remote = server_client_rs::TrojanConfig {
             id: 1,
             server_port: 443,
             allow_insecure: false,
@@ -646,7 +646,7 @@ mod tests {
 
     #[test]
     fn test_server_config_from_remote_websocket_full() {
-        let remote = server_r_client::TrojanConfig {
+        let remote = server_client_rs::TrojanConfig {
             id: 1,
             server_port: 443,
             allow_insecure: false,
@@ -664,7 +664,7 @@ mod tests {
 
     #[test]
     fn test_server_config_from_remote_grpc() {
-        let remote = server_r_client::TrojanConfig {
+        let remote = server_client_rs::TrojanConfig {
             id: 1,
             server_port: 443,
             allow_insecure: false,
@@ -682,7 +682,7 @@ mod tests {
 
     #[test]
     fn test_server_config_from_remote_network_case_insensitive() {
-        let remote = server_r_client::TrojanConfig {
+        let remote = server_client_rs::TrojanConfig {
             id: 1,
             server_port: 443,
             allow_insecure: false,
@@ -699,7 +699,7 @@ mod tests {
 
     #[test]
     fn test_server_config_from_remote_with_cert() {
-        let remote = server_r_client::TrojanConfig {
+        let remote = server_client_rs::TrojanConfig {
             id: 1,
             server_port: 443,
             allow_insecure: false,
@@ -717,7 +717,7 @@ mod tests {
 
     #[test]
     fn test_server_config_from_remote_with_acl_config() {
-        let remote = server_r_client::TrojanConfig {
+        let remote = server_client_rs::TrojanConfig {
             id: 1,
             server_port: 443,
             allow_insecure: false,
@@ -738,7 +738,7 @@ mod tests {
 
     #[test]
     fn test_server_config_host_always_binds_all() {
-        let remote = server_r_client::TrojanConfig {
+        let remote = server_client_rs::TrojanConfig {
             id: 1,
             server_port: 8080,
             allow_insecure: false,
@@ -755,7 +755,7 @@ mod tests {
 
     #[test]
     fn test_server_config_default_ws_path() {
-        let remote = server_r_client::TrojanConfig {
+        let remote = server_client_rs::TrojanConfig {
             id: 1,
             server_port: 443,
             allow_insecure: false,
@@ -775,13 +775,13 @@ mod tests {
     #[test]
     fn test_server_config_custom_ws_path() {
         use std::collections::HashMap;
-        let remote = server_r_client::TrojanConfig {
+        let remote = server_client_rs::TrojanConfig {
             id: 1,
             server_port: 443,
             allow_insecure: false,
             server_name: None,
             network: Some("ws".to_string()),
-            websocket_config: Some(server_r_client::WebSocketConfig {
+            websocket_config: Some(server_client_rs::WebSocketConfig {
                 path: Some("/custom/path".to_string()),
                 headers: Some(HashMap::new()),
             }),
@@ -796,7 +796,7 @@ mod tests {
 
     #[test]
     fn test_server_config_default_grpc_service_name() {
-        let remote = server_r_client::TrojanConfig {
+        let remote = server_client_rs::TrojanConfig {
             id: 1,
             server_port: 443,
             allow_insecure: false,
@@ -816,14 +816,14 @@ mod tests {
 
     #[test]
     fn test_server_config_custom_grpc_service_name() {
-        let remote = server_r_client::TrojanConfig {
+        let remote = server_client_rs::TrojanConfig {
             id: 1,
             server_port: 443,
             allow_insecure: false,
             server_name: None,
             network: Some("grpc".to_string()),
             websocket_config: None,
-            grpc_config: Some(server_r_client::GrpcConfig {
+            grpc_config: Some(server_client_rs::GrpcConfig {
                 service_name: Some("MyCustomService".to_string()),
             }),
         };
@@ -837,13 +837,13 @@ mod tests {
 
     #[test]
     fn test_server_config_ws_config_with_empty_path() {
-        let remote = server_r_client::TrojanConfig {
+        let remote = server_client_rs::TrojanConfig {
             id: 1,
             server_port: 443,
             allow_insecure: false,
             server_name: None,
             network: Some("ws".to_string()),
-            websocket_config: Some(server_r_client::WebSocketConfig {
+            websocket_config: Some(server_client_rs::WebSocketConfig {
                 path: None, // Explicitly None
                 headers: None,
             }),
@@ -903,14 +903,14 @@ mod tests {
 
     #[test]
     fn test_server_config_grpc_config_with_empty_service_name() {
-        let remote = server_r_client::TrojanConfig {
+        let remote = server_client_rs::TrojanConfig {
             id: 1,
             server_port: 443,
             allow_insecure: false,
             server_name: None,
             network: Some("grpc".to_string()),
             websocket_config: None,
-            grpc_config: Some(server_r_client::GrpcConfig {
+            grpc_config: Some(server_client_rs::GrpcConfig {
                 service_name: None, // Explicitly None
             }),
         };

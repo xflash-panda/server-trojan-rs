@@ -1,17 +1,20 @@
 //! gRPC API client for remote panel communication (Agent version)
 
 use anyhow::{anyhow, Result};
+use connectrpc::client::{ClientConfig, Http2Connection, SharedHttp2Connection};
+use connectrpc::Protocol;
 use serde::{Deserialize, Serialize};
-use server_r_agent_proto::pkg::{
-    agent_client::AgentClient, ConfigRequest, ConfigResponse, HeartbeatRequest,
-    NodeType as GrpcNodeType, RegisterRequest as GrpcRegisterRequest, SubmitRequest,
-    UnregisterRequest, UsersRequest, VerifyRequest,
+use server_agent_proto_rs::{
+    AgentClient, ConfigRequest, HeartbeatRequest, NodeType as GrpcNodeType,
+    RegisterRequest as GrpcRegisterRequest, SubmitRequest, UnregisterRequest, UsersRequest,
+    VerifyRequest,
 };
-use server_r_client::models::{parse_raw_config_response, unmarshal_users, NodeType, TrojanConfig};
+use server_client_rs::models::{
+    parse_raw_config_response, unmarshal_users, NodeType, TrojanConfig,
+};
 use std::path::PathBuf;
 use std::time::Duration;
 use tokio::sync::RwLock;
-use tonic::transport::Channel;
 
 use crate::config::{CliArgs, User};
 use crate::logger::log;
@@ -125,7 +128,7 @@ fn get_hostname() -> String {
 
 /// API manager for handling all remote panel operations via gRPC
 pub struct ApiManager {
-    client: RwLock<Option<AgentClient<Channel>>>,
+    client: RwLock<Option<AgentClient<SharedHttp2Connection>>>,
     config: PanelConfig,
     register_id: RwLock<Option<String>>,
 }
@@ -143,7 +146,7 @@ impl ApiManager {
     }
 
     /// Connect to the gRPC server
-    async fn connect(&self) -> Result<AgentClient<Channel>> {
+    async fn connect(&self) -> Result<AgentClient<SharedHttp2Connection>> {
         let endpoint = format!(
             "http://{}:{}",
             self.config.server_host, self.config.server_port
@@ -155,25 +158,27 @@ impl ApiManager {
             "Connecting to gRPC server"
         );
 
-        let channel = Channel::from_shared(endpoint.clone())
-            .map_err(|e| anyhow!("Invalid endpoint: {}", e))?
-            .connect_timeout(timeout)
-            .timeout(timeout)
-            .tcp_keepalive(Some(Duration::from_secs(60)))
-            .http2_keep_alive_interval(Duration::from_secs(30))
-            .keep_alive_timeout(Duration::from_secs(10))
-            .keep_alive_while_idle(true)
-            .connect()
+        let uri: http::Uri = endpoint
+            .parse()
+            .map_err(|e| anyhow!("Invalid endpoint URI: {}", e))?;
+
+        let conn = Http2Connection::connect_plaintext(uri.clone())
             .await
             .map_err(|e| anyhow!("Failed to connect to gRPC server {}: {}", endpoint, e))?;
 
-        let client = AgentClient::new(channel);
+        let shared = conn.shared(1024);
+
+        let config = ClientConfig::new(uri)
+            .protocol(Protocol::Grpc)
+            .default_timeout(timeout);
+
+        let client = AgentClient::new(shared, config);
         log::info!("Connected to gRPC server");
         Ok(client)
     }
 
     /// Get or create gRPC client
-    async fn get_client(&self) -> Result<AgentClient<Channel>> {
+    async fn get_client(&self) -> Result<AgentClient<SharedHttp2Connection>> {
         let client_guard = self.client.read().await;
         if let Some(client) = client_guard.clone() {
             return Ok(client);
@@ -258,36 +263,33 @@ impl ApiManager {
 
     /// Verify register_id with gRPC server
     async fn verify_register_id(&self, register_id: &str) -> Result<bool> {
-        let mut client = self.get_client().await?;
-
-        let request = tonic::Request::new(VerifyRequest {
-            node_type: GrpcNodeType::Trojan as i32,
-            register_id: register_id.to_string(),
-        });
+        let client = self.get_client().await?;
 
         let response = client
-            .verify(request)
+            .verify(VerifyRequest {
+                node_type: GrpcNodeType::TROJAN.into(),
+                register_id: register_id.to_string(),
+                ..Default::default()
+            })
             .await
             .map_err(|e| anyhow!("gRPC verify request failed: {}", e))?;
 
-        Ok(response.into_inner().result)
+        Ok(response.into_owned().result)
     }
 
     /// Fetch config from gRPC server
     pub async fn fetch_config(&self) -> Result<TrojanConfig> {
-        let mut client = self.get_client().await?;
+        let client = self.get_client().await?;
 
-        let request = tonic::Request::new(ConfigRequest {
-            node_id: self.config.node_id as i32,
-            node_type: GrpcNodeType::Trojan as i32,
-        });
-
-        let response = client
-            .config(request)
+        let config_response = client
+            .config(ConfigRequest {
+                node_id: self.config.node_id as i32,
+                node_type: GrpcNodeType::TROJAN.into(),
+                ..Default::default()
+            })
             .await
-            .map_err(|e| anyhow!("gRPC config request failed: {}", e))?;
-
-        let config_response: ConfigResponse = response.into_inner();
+            .map_err(|e| anyhow!("gRPC config request failed: {}", e))?
+            .into_owned();
 
         if !config_response.result {
             return Err(anyhow!("Server returned failure for config request"));
@@ -316,22 +318,21 @@ impl ApiManager {
 
     /// Register node with gRPC server
     async fn register_node(&self, hostname: String, port: u16) -> Result<String> {
-        let mut client = self.get_client().await?;
-
-        let request = tonic::Request::new(GrpcRegisterRequest {
-            node_id: self.config.node_id as i32,
-            node_type: GrpcNodeType::Trojan as i32,
-            host_name: hostname,
-            port: port.to_string(),
-            ip: String::new(),
-        });
+        let client = self.get_client().await?;
 
         let response = client
-            .register(request)
+            .register(GrpcRegisterRequest {
+                node_id: self.config.node_id as i32,
+                node_type: GrpcNodeType::TROJAN.into(),
+                host_name: hostname,
+                port: port.to_string(),
+                ip: String::new(),
+                ..Default::default()
+            })
             .await
             .map_err(|e| anyhow!("gRPC register request failed: {}", e))?;
 
-        Ok(response.into_inner().register_id)
+        Ok(response.into_owned().register_id)
     }
 
     /// Initialize node - try to verify existing registration or register new
@@ -420,19 +421,18 @@ impl ApiManager {
         if let Some(id) = register_id {
             log::info!(register_id = %id, "Unregistering node");
 
-            let mut client = self.get_client().await?;
-
-            let request = tonic::Request::new(UnregisterRequest {
-                node_type: GrpcNodeType::Trojan as i32,
-                register_id: id.clone(),
-            });
+            let client = self.get_client().await?;
 
             let response = client
-                .unregister(request)
+                .unregister(UnregisterRequest {
+                    node_type: GrpcNodeType::TROJAN.into(),
+                    register_id: id.clone(),
+                    ..Default::default()
+                })
                 .await
                 .map_err(|e| anyhow!("gRPC unregister request failed: {}", e))?;
 
-            if response.into_inner().result {
+            if response.into_owned().result {
                 log::info!("Node unregistered successfully");
                 self.delete_state();
                 *self.register_id.write().await = None;
@@ -446,19 +446,18 @@ impl ApiManager {
 
     /// Fetch users from gRPC server
     pub async fn fetch_users(&self) -> Result<Vec<User>> {
-        let mut client = self.get_client().await?;
+        let client = self.get_client().await?;
 
-        let request = tonic::Request::new(UsersRequest {
-            node_type: GrpcNodeType::Trojan as i32,
-            node_id: self.config.node_id as i32,
-        });
-
-        let response = client
-            .users(request)
+        let users_response = client
+            .users(UsersRequest {
+                node_type: GrpcNodeType::TROJAN.into(),
+                node_id: self.config.node_id as i32,
+                ..Default::default()
+            })
             .await
-            .map_err(|e| anyhow!("gRPC users request failed: {}", e))?;
+            .map_err(|e| anyhow!("gRPC users request failed: {}", e))?
+            .into_owned();
 
-        let users_response = response.into_inner();
         let raw_data_str = String::from_utf8_lossy(&users_response.raw_data);
         log::debug!(raw_data = %raw_data_str, "Raw users data from server");
 
@@ -509,21 +508,20 @@ impl ApiManager {
         let raw_stats = serde_json::to_vec(&stats)
             .map_err(|e| anyhow!("Failed to serialize traffic stats: {}", e))?;
 
-        let mut client = self.get_client().await?;
-
-        let request = tonic::Request::new(SubmitRequest {
-            node_type: GrpcNodeType::Trojan as i32,
-            register_id,
-            raw_data,
-            raw_stats,
-        });
+        let client = self.get_client().await?;
 
         let response = client
-            .submit(request)
+            .submit(SubmitRequest {
+                node_type: GrpcNodeType::TROJAN.into(),
+                register_id,
+                raw_data,
+                raw_stats,
+                ..Default::default()
+            })
             .await
             .map_err(|e| anyhow!("gRPC submit request failed: {}", e))?;
 
-        if response.into_inner().result {
+        if response.into_owned().result {
             log::debug!(count = count, "Traffic submitted successfully");
             Ok(())
         } else {
@@ -540,19 +538,18 @@ impl ApiManager {
             .clone()
             .ok_or_else(|| anyhow!("Not registered"))?;
 
-        let mut client = self.get_client().await?;
-
-        let request = tonic::Request::new(HeartbeatRequest {
-            node_type: GrpcNodeType::Trojan as i32,
-            register_id,
-        });
+        let client = self.get_client().await?;
 
         let response = client
-            .heartbeat(request)
+            .heartbeat(HeartbeatRequest {
+                node_type: GrpcNodeType::TROJAN.into(),
+                register_id,
+                ..Default::default()
+            })
             .await
             .map_err(|e| anyhow!("gRPC heartbeat request failed: {}", e))?;
 
-        if response.into_inner().result {
+        if response.into_owned().result {
             log::debug!("Heartbeat sent successfully");
             Ok(())
         } else {
