@@ -1,5 +1,5 @@
 [package]
-name = "server-trojan-r"
+name = "server-trojan-rs"
 version = "0.2.22"
 edition = "2021"
 
@@ -21,8 +21,6 @@ serde = { version = "1.0", features = ["derive"] }
 serde_json = "1"
 serde_yaml = "0.9"
 toml = "1.0"
-tonic = "0.14"
-tokio-stream = "0.1.18"
 h2 = "0.4.13"
 http = "1.4.0"
 thiserror = "2.0"
@@ -37,11 +35,10 @@ async-trait = "0.1"
 arc-swap = "1"
 
 # ACL Engine (remote)
-acl-engine-r = { git = "https://github.com/xflash-panda/acl-engine-r.git", tag = "v0.4.1", features = ["async"] }
+acl-engine-r = { git = "https://github.com/xflash-panda/acl-engine-rs.git", tag = "v0.4.1", features = ["async"] }
 
-# Panel gRPC Client
-server-r-agent-proto = { git = "https://github.com/xflash-panda/server-r-agent-proto.git", tag = "v0.1.2" }
-server-r-client = { git = "https://github.com/xflash-panda/server-r-client.git", tag = "v0.1.8" }
+# Panel Client
+server-client-rs = { git = "https://github.com/xflash-panda/server-client-rs.git", tag = "v0.1.12" }
 hostname = "0.4"
 socket2 = "0.6"
 
