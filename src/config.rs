@@ -5,6 +5,8 @@
 
 use anyhow::{anyhow, Result};
 use clap::Parser;
+use serde::Deserialize;
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::time::Duration;
 
@@ -236,6 +238,48 @@ impl CliArgs {
     }
 }
 
+/// Trojan node configuration deserialized from panel JSON
+#[derive(Debug, Clone, Deserialize)]
+pub struct TrojanConfig {
+    pub server_port: u16,
+    #[serde(default)]
+    pub network: Option<String>,
+    #[serde(default)]
+    pub websocket_config: Option<WebSocketConfig>,
+    #[serde(default)]
+    pub grpc_config: Option<GrpcConfig>,
+}
+
+/// WebSocket transport configuration from panel
+#[derive(Debug, Clone, Deserialize)]
+pub struct WebSocketConfig {
+    #[serde(default)]
+    pub path: Option<String>,
+    #[serde(default)]
+    #[allow(dead_code)]
+    pub headers: Option<HashMap<String, String>>,
+}
+
+/// gRPC transport configuration from panel
+#[derive(Debug, Clone, Deserialize)]
+pub struct GrpcConfig {
+    #[serde(default)]
+    pub service_name: Option<String>,
+}
+
+/// Parse NodeConfigEnum into TrojanConfig
+pub fn parse_trojan_config(node_config: panel_core::NodeConfigEnum) -> Result<TrojanConfig> {
+    match node_config {
+        panel_core::NodeConfigEnum::Trojan(json) => {
+            serde_json::from_str(&json).map_err(|e| anyhow!("Failed to parse TrojanConfig: {}", e))
+        }
+        other => Err(anyhow!(
+            "Expected Trojan config, got {:?}",
+            std::mem::discriminant(&other)
+        )),
+    }
+}
+
 /// Default gRPC service name (Xray compatible)
 pub const DEFAULT_GRPC_SERVICE_NAME: &str = "GunService";
 
@@ -329,7 +373,7 @@ pub struct ServerConfig {
 
 impl ServerConfig {
     /// Build ServerConfig from remote TrojanConfig and CLI args
-    pub fn from_remote(remote: &server_panel_rs::TrojanConfig, cli: &CliArgs) -> Result<Self> {
+    pub fn from_remote(remote: &TrojanConfig, cli: &CliArgs) -> Result<Self> {
         // Determine transport mode from remote config
         let network = remote.network.as_deref().unwrap_or("tcp");
         let (enable_ws, enable_grpc) = match network.to_lowercase().as_str() {
@@ -555,11 +599,8 @@ mod tests {
 
     #[test]
     fn test_server_config_from_remote_tcp() {
-        let remote = server_panel_rs::TrojanConfig {
-            id: 1,
+        let remote = TrojanConfig {
             server_port: 443,
-            allow_insecure: false,
-            server_name: None,
             network: None, // TCP by default
             websocket_config: None,
             grpc_config: None,
@@ -574,11 +615,8 @@ mod tests {
 
     #[test]
     fn test_server_config_from_remote_websocket() {
-        let remote = server_panel_rs::TrojanConfig {
-            id: 1,
+        let remote = TrojanConfig {
             server_port: 443,
-            allow_insecure: false,
-            server_name: None,
             network: Some("ws".to_string()),
             websocket_config: None,
             grpc_config: None,
@@ -592,11 +630,8 @@ mod tests {
 
     #[test]
     fn test_server_config_from_remote_websocket_full() {
-        let remote = server_panel_rs::TrojanConfig {
-            id: 1,
+        let remote = TrojanConfig {
             server_port: 443,
-            allow_insecure: false,
-            server_name: None,
             network: Some("websocket".to_string()),
             websocket_config: None,
             grpc_config: None,
@@ -610,11 +645,8 @@ mod tests {
 
     #[test]
     fn test_server_config_from_remote_grpc() {
-        let remote = server_panel_rs::TrojanConfig {
-            id: 1,
+        let remote = TrojanConfig {
             server_port: 443,
-            allow_insecure: false,
-            server_name: None,
             network: Some("grpc".to_string()),
             websocket_config: None,
             grpc_config: None,
@@ -628,11 +660,8 @@ mod tests {
 
     #[test]
     fn test_server_config_from_remote_network_case_insensitive() {
-        let remote = server_panel_rs::TrojanConfig {
-            id: 1,
+        let remote = TrojanConfig {
             server_port: 443,
-            allow_insecure: false,
-            server_name: None,
             network: Some("GRPC".to_string()),
             websocket_config: None,
             grpc_config: None,
@@ -645,11 +674,8 @@ mod tests {
 
     #[test]
     fn test_server_config_from_remote_with_cert() {
-        let remote = server_panel_rs::TrojanConfig {
-            id: 1,
+        let remote = TrojanConfig {
             server_port: 443,
-            allow_insecure: false,
-            server_name: None,
             network: None,
             websocket_config: None,
             grpc_config: None,
@@ -663,11 +689,8 @@ mod tests {
 
     #[test]
     fn test_server_config_from_remote_with_acl_config() {
-        let remote = server_panel_rs::TrojanConfig {
-            id: 1,
+        let remote = TrojanConfig {
             server_port: 443,
-            allow_insecure: false,
-            server_name: None,
             network: None,
             websocket_config: None,
             grpc_config: None,
@@ -684,11 +707,8 @@ mod tests {
 
     #[test]
     fn test_server_config_host_always_binds_all() {
-        let remote = server_panel_rs::TrojanConfig {
-            id: 1,
+        let remote = TrojanConfig {
             server_port: 8080,
-            allow_insecure: false,
-            server_name: None,
             network: None,
             websocket_config: None,
             grpc_config: None,
@@ -701,11 +721,8 @@ mod tests {
 
     #[test]
     fn test_server_config_default_ws_path() {
-        let remote = server_panel_rs::TrojanConfig {
-            id: 1,
+        let remote = TrojanConfig {
             server_port: 443,
-            allow_insecure: false,
-            server_name: None,
             network: Some("ws".to_string()),
             websocket_config: None, // No config, should use default
             grpc_config: None,
@@ -721,13 +738,10 @@ mod tests {
     #[test]
     fn test_server_config_custom_ws_path() {
         use std::collections::HashMap;
-        let remote = server_panel_rs::TrojanConfig {
-            id: 1,
+        let remote = TrojanConfig {
             server_port: 443,
-            allow_insecure: false,
-            server_name: None,
             network: Some("ws".to_string()),
-            websocket_config: Some(server_panel_rs::WebSocketConfig {
+            websocket_config: Some(WebSocketConfig {
                 path: Some("/custom/path".to_string()),
                 headers: Some(HashMap::new()),
             }),
@@ -742,11 +756,8 @@ mod tests {
 
     #[test]
     fn test_server_config_default_grpc_service_name() {
-        let remote = server_panel_rs::TrojanConfig {
-            id: 1,
+        let remote = TrojanConfig {
             server_port: 443,
-            allow_insecure: false,
-            server_name: None,
             network: Some("grpc".to_string()),
             websocket_config: None,
             grpc_config: None, // No config, should use default
@@ -762,14 +773,11 @@ mod tests {
 
     #[test]
     fn test_server_config_custom_grpc_service_name() {
-        let remote = server_panel_rs::TrojanConfig {
-            id: 1,
+        let remote = TrojanConfig {
             server_port: 443,
-            allow_insecure: false,
-            server_name: None,
             network: Some("grpc".to_string()),
             websocket_config: None,
-            grpc_config: Some(server_panel_rs::GrpcConfig {
+            grpc_config: Some(GrpcConfig {
                 service_name: Some("MyCustomService".to_string()),
             }),
         };
@@ -783,13 +791,10 @@ mod tests {
 
     #[test]
     fn test_server_config_ws_config_with_empty_path() {
-        let remote = server_panel_rs::TrojanConfig {
-            id: 1,
+        let remote = TrojanConfig {
             server_port: 443,
-            allow_insecure: false,
-            server_name: None,
             network: Some("ws".to_string()),
-            websocket_config: Some(server_panel_rs::WebSocketConfig {
+            websocket_config: Some(WebSocketConfig {
                 path: None, // Explicitly None
                 headers: None,
             }),
@@ -805,14 +810,11 @@ mod tests {
 
     #[test]
     fn test_server_config_grpc_config_with_empty_service_name() {
-        let remote = server_panel_rs::TrojanConfig {
-            id: 1,
+        let remote = TrojanConfig {
             server_port: 443,
-            allow_insecure: false,
-            server_name: None,
             network: Some("grpc".to_string()),
             websocket_config: None,
-            grpc_config: Some(server_panel_rs::GrpcConfig {
+            grpc_config: Some(GrpcConfig {
                 service_name: None, // Explicitly None
             }),
         };

@@ -35,6 +35,7 @@ use crate::business::{
     TrojanStatsCollector, UserManager,
 };
 use crate::core::{ConnectionManager, Server};
+use panel_core::PanelApi;
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -65,7 +66,7 @@ async fn main() -> Result<()> {
         api: cli.api.clone(),
         token: cli.token.clone(),
         node_id: cli.node,
-        node_type: server_panel_rs::NodeType::Trojan,
+        node_type: panel_core::NodeType::Trojan,
         state_file_path: cli.data_dir.join(format!("node-{}.state", cli.node)),
         api_timeout: cli.api_timeout.as_secs(),
         debug: cli.log_mode == "debug",
@@ -79,11 +80,11 @@ async fn main() -> Result<()> {
 
     // Fetch configuration from remote panel (needed for port before registration)
     let node_config = api_manager.fetch_config().await?;
-    let remote_config = node_config.as_trojan()?.clone();
+    let remote_config = config::parse_trojan_config(node_config)?;
 
     // Initialize node with port from config
-    let register_id = api_manager.initialize(remote_config.server_port).await?;
-    log::info!(register_id = %register_id, "Node initialized");
+    api_manager.initialize(remote_config.server_port).await?;
+    log::info!("Node initialized");
 
     // Fetch initial users
     let users = api_manager.fetch_users().await?;
@@ -128,7 +129,7 @@ async fn main() -> Result<()> {
         cli.heartbeat_interval,
     );
     let conn_mgr_for_kick = conn_manager_for_shutdown.clone();
-    let on_diff = Arc::new(move |diff: server_panel_rs::UserDiff| {
+    let on_diff = Arc::new(move |diff: panel_core::UserDiff| {
         for uid in diff.removed_ids.iter().chain(diff.uuid_changed_ids.iter()) {
             conn_mgr_for_kick.kick_user(*uid);
         }

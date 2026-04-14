@@ -1,4 +1,4 @@
-//! Business logic — thin wrappers bridging server-panel-rs to core traits
+//! Business logic — thin wrappers bridging panel crates to core traits
 
 use std::sync::Arc;
 
@@ -6,10 +6,10 @@ use crate::core::hooks::{Authenticator, StatsCollector};
 use crate::core::UserId;
 
 // Re-export panel types used by main.rs
-pub use server_panel_rs::{
-    ApiManager, BackgroundTasks, PanelConfig, StatsCollector as PanelStatsCollector, TaskConfig,
-    UserManager,
+pub use panel_core::{
+    BackgroundTasks, StatsCollector as PanelStatsCollector, TaskConfig, UserManager,
 };
+pub use panel_http::{HttpApiManager as ApiManager, HttpPanelConfig as PanelConfig};
 
 /// Newtype bridging panel::StatsCollector to core::hooks::StatsCollector trait
 pub struct TrojanStatsCollector(pub Arc<PanelStatsCollector>);
@@ -40,7 +40,7 @@ impl Authenticator for TrojanAuthenticator {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use server_panel_rs::{password_to_hex, User};
+    use panel_core::{password_to_hex, User};
 
     // --- TrojanAuthenticator tests ---
 
