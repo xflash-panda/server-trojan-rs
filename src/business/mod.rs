@@ -1,7 +1,5 @@
 //! Business logic — thin wrappers bridging server-panel-rs to core traits
 
-use arc_swap::ArcSwap;
-use std::collections::HashMap;
 use std::sync::Arc;
 
 use crate::core::hooks::{Authenticator, StatsCollector};
@@ -30,28 +28,37 @@ impl StatsCollector for TrojanStatsCollector {
     }
 }
 
-/// Newtype bridging ArcSwap user map to core::hooks::Authenticator trait
-pub struct TrojanAuthenticator(pub Arc<ArcSwap<HashMap<[u8; 56], i64>>>);
+/// Newtype bridging UserManager::authenticate() to core::hooks::Authenticator trait
+pub struct TrojanAuthenticator(pub Arc<UserManager>);
 
 impl Authenticator for TrojanAuthenticator {
     fn authenticate(&self, password: &[u8; 56]) -> Option<UserId> {
-        self.0.load().get(password).copied()
+        self.0.authenticate(password)
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use server_panel_rs::password_to_hex;
+    use server_panel_rs::{password_to_hex, User};
 
     // --- TrojanAuthenticator tests ---
 
-    fn make_authenticator(entries: &[(&str, i64)]) -> TrojanAuthenticator {
-        let mut map = HashMap::new();
-        for (password, id) in entries {
-            map.insert(password_to_hex(password), *id);
+    fn create_user(id: i64, uuid: &str) -> User {
+        User {
+            id,
+            uuid: uuid.to_string(),
         }
-        TrojanAuthenticator(Arc::new(ArcSwap::from_pointee(map)))
+    }
+
+    fn make_authenticator(entries: &[(&str, i64)]) -> TrojanAuthenticator {
+        let um = UserManager::new();
+        let users: Vec<User> = entries
+            .iter()
+            .map(|(uuid, id)| create_user(*id, uuid))
+            .collect();
+        um.init(&users);
+        TrojanAuthenticator(Arc::new(um))
     }
 
     #[test]
@@ -77,16 +84,16 @@ mod tests {
 
     #[test]
     fn test_authenticate_hot_reload() {
-        let auth = make_authenticator(&[("uuid-1", 1)]);
+        let um = Arc::new(UserManager::new());
+        um.init(&[create_user(1, "uuid-1")]);
+        let auth = TrojanAuthenticator(Arc::clone(&um));
 
         // Verify initial state
         assert_eq!(auth.authenticate(&password_to_hex("uuid-1")), Some(1));
         assert_eq!(auth.authenticate(&password_to_hex("uuid-2")), None);
 
-        // Simulate hot-reload: swap in a new map
-        let mut new_map = HashMap::new();
-        new_map.insert(password_to_hex("uuid-2"), 2);
-        auth.0.store(Arc::new(new_map));
+        // Simulate hot-reload via UserManager::update
+        um.update(&[create_user(2, "uuid-2")]);
 
         // Old password gone, new password works
         assert_eq!(auth.authenticate(&password_to_hex("uuid-1")), None);

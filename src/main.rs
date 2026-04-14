@@ -94,8 +94,8 @@ async fn main() -> Result<()> {
     // Build server config
     let server_config = config::ServerConfig::from_remote(&remote_config, &cli)?;
 
-    // Create authenticator using shared user map
-    let authenticator = Arc::new(TrojanAuthenticator(user_manager.get_users_arc()));
+    // Create authenticator using UserManager
+    let authenticator = Arc::new(TrojanAuthenticator(Arc::clone(&user_manager)));
 
     // Create stats collector
     let stats_collector = Arc::new(PanelStatsCollector::new());
