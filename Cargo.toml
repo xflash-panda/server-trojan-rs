@@ -32,7 +32,7 @@ async-trait = "0.1"
 arc-swap = "1"
 
 # ACL Engine (remote)
-acl-engine-r = { git = "https://github.com/xflash-panda/acl-engine-rs.git", tag = "v0.4.1", features = ["async"] }
+acl-engine-rs = { git = "https://github.com/xflash-panda/acl-engine-rs.git", tag = "v0.4.4", features = ["async"] }
 
 # Panel Integration
 panel-core = { path = "../server-panel-rs/panel-core" }
