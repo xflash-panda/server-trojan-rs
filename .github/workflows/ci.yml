@@ -8,6 +8,8 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
+  CARGO_HOME: /home/runner/.cargo
+  CARGO_INCREMENTAL: 0
 
 jobs:
   check:
@@ -17,8 +19,18 @@ jobs:
       - name: Checkout source
         uses: actions/checkout@v4
 
+      - name: Checkout server-panel-rs
+        uses: actions/checkout@v4
+        with:
+          repository: xflash-panda/server-panel-rs
+          token: ${{ secrets.GIT_PAT }}
+          path: ../server-panel-rs
+
+      - name: Configure git credentials
+        run: git config --global url."https://x-access-token:${{ secrets.GIT_PAT }}@github.com/".insteadOf "https://github.com/"
+
       - name: Install system dependencies
-        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler cmake
+        run: sudo apt-get update && sudo apt-get install -y cmake
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -57,8 +69,18 @@ jobs:
       - name: Checkout source
         uses: actions/checkout@v4
 
+      - name: Checkout server-panel-rs
+        uses: actions/checkout@v4
+        with:
+          repository: xflash-panda/server-panel-rs
+          token: ${{ secrets.GIT_PAT }}
+          path: ../server-panel-rs
+
+      - name: Configure git credentials
+        run: git config --global url."https://x-access-token:${{ secrets.GIT_PAT }}@github.com/".insteadOf "https://github.com/"
+
       - name: Install system dependencies
-        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler cmake
+        run: sudo apt-get update && sudo apt-get install -y cmake
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -84,8 +106,18 @@ jobs:
       - name: Checkout source
         uses: actions/checkout@v4
 
+      - name: Checkout server-panel-rs
+        uses: actions/checkout@v4
+        with:
+          repository: xflash-panda/server-panel-rs
+          token: ${{ secrets.GIT_PAT }}
+          path: ../server-panel-rs
+
+      - name: Configure git credentials
+        run: git config --global url."https://x-access-token:${{ secrets.GIT_PAT }}@github.com/".insteadOf "https://github.com/"
+
       - name: Install system dependencies
-        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler cmake
+        run: sudo apt-get update && sudo apt-get install -y cmake
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
