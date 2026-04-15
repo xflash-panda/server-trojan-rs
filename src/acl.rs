@@ -33,8 +33,8 @@ use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
-// Re-export types from acl-engine-r
-pub use acl_engine_r::{
+// Re-export types from acl-engine-rs
+pub use acl_engine_rs::{
     geo::{AutoGeoLoader, GeoIpFormat, GeoSiteFormat, NilGeoLoader},
     outbound::{
         Addr, AsyncOutbound, AsyncTcpConn, AsyncUdpConn, Direct, DirectMode, DirectOptions, Http,
@@ -442,7 +442,7 @@ impl OutboundHandler {
 
 #[async_trait]
 impl AsyncOutbound for OutboundHandler {
-    async fn dial_tcp(&self, addr: &mut Addr) -> acl_engine_r::Result<Box<dyn AsyncTcpConn>> {
+    async fn dial_tcp(&self, addr: &mut Addr) -> acl_engine_rs::Result<Box<dyn AsyncTcpConn>> {
         match self {
             OutboundHandler::Direct(d) => d.dial_tcp(addr).await,
             OutboundHandler::Socks5 { inner, .. } => inner.dial_tcp(addr).await,
@@ -451,7 +451,7 @@ impl AsyncOutbound for OutboundHandler {
         }
     }
 
-    async fn dial_udp(&self, addr: &mut Addr) -> acl_engine_r::Result<Box<dyn AsyncUdpConn>> {
+    async fn dial_udp(&self, addr: &mut Addr) -> acl_engine_rs::Result<Box<dyn AsyncUdpConn>> {
         match self {
             OutboundHandler::Direct(d) => d.dial_udp(addr).await,
             OutboundHandler::Socks5 { inner, .. } => inner.dial_udp(addr).await,
@@ -464,7 +464,7 @@ impl AsyncOutbound for OutboundHandler {
 /// ACL Engine for rule-based traffic routing
 pub struct AclEngine {
     /// Compiled rule set
-    compiled: acl_engine_r::CompiledRuleSet<Arc<OutboundHandler>>,
+    compiled: acl_engine_rs::CompiledRuleSet<Arc<OutboundHandler>>,
     /// Keep outbounds map for reference
     #[allow(dead_code)]
     outbounds: HashMap<String, Arc<OutboundHandler>>,
@@ -512,7 +512,7 @@ impl AclEngine {
 
         // Step 4: Parse rules text
         let rules_text = rules.join("\n");
-        let text_rules = acl_engine_r::parse_rules(&rules_text)
+        let text_rules = acl_engine_rs::parse_rules(&rules_text)
             .map_err(|e| anyhow!("Failed to parse ACL rules: {}", e))?;
 
         // Step 5: Create geo loader
@@ -535,7 +535,7 @@ impl AclEngine {
         }
 
         // Step 6: Compile rules
-        let compiled = acl_engine_r::compile(
+        let compiled = acl_engine_rs::compile(
             &text_rules,
             &outbounds,
             NonZeroUsize::new(4096).unwrap(),
@@ -568,10 +568,10 @@ impl AclEngine {
             Arc::new(OutboundHandler::Reject(Arc::new(Reject::new()))),
         );
 
-        let text_rules = acl_engine_r::parse_rules("direct(all)")
+        let text_rules = acl_engine_rs::parse_rules("direct(all)")
             .map_err(|e| anyhow!("Failed to parse default rules: {}", e))?;
 
-        let compiled = acl_engine_r::compile(
+        let compiled = acl_engine_rs::compile(
             &text_rules,
             &outbounds,
             NonZeroUsize::new(1024).unwrap(),

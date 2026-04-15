@@ -606,7 +606,7 @@ async fn handle_udp_associate(
                     conn.read_from(&mut udp_recv_buf).await
                 } else {
                     // No UDP connection, wait forever
-                    std::future::pending::<acl_engine_r::Result<(usize, AclAddr)>>().await
+                    std::future::pending::<acl_engine_rs::Result<(usize, AclAddr)>>().await
                 }
             } => {
                 match result {

@@ -3,7 +3,7 @@
 //! Architecture:
 //! - `core/`: Core proxy logic with hook traits for extensibility
 //! - `transport/`: Transport layer abstraction (TCP, WebSocket, gRPC)
-//! - `business/`: Business implementations (API, auth, stats)
+//! - `business/`: Business implementations (panel API, auth, stats)
 //! - `handler`: Connection processing logic
 //! - `server_runner`: Server startup and accept loop
 
@@ -31,7 +31,8 @@ use std::sync::Arc;
 use tokio_util::sync::CancellationToken;
 
 use crate::business::{
-    ApiAuthenticator, ApiManager, ApiStatsCollector, BackgroundTasks, TaskConfig, UserManager,
+    ApiManager, BackgroundTasks, NodeType, PanelApi, PanelConfig, PanelStatsCollector, TaskConfig,
+    TrojanAuthenticator, TrojanStatsCollector, UserManager,
 };
 use crate::core::{ConnectionManager, Server};
 
@@ -58,31 +59,50 @@ async fn main() -> Result<()> {
     // Create connection manager (shared between core and business layers)
     let conn_manager = ConnectionManager::new();
 
-    // Create API manager
-    let api_manager = Arc::new(ApiManager::new(&cli)?);
+    // Build panel config from CLI args
+    let panel_config = PanelConfig {
+        server_host: cli.server_host.clone(),
+        server_port: cli.port,
+        node_id: cli.node,
+        node_type: NodeType::Trojan,
+        data_dir: cli.data_dir.clone(),
+        api_timeout: cli.api_timeout,
+        server_name: cli
+            .server_name
+            .clone()
+            .unwrap_or_else(|| cli.server_host.clone()),
+        ca_cert_path: cli.ca_cert_path.clone(),
+    };
 
-    // Create user manager
-    let user_manager = Arc::new(UserManager::new(conn_manager.clone()));
+    // Create API manager (connect-rpc via QUIC/H3)
+    let api_manager = Arc::new(ApiManager::new(panel_config));
 
-    // Fetch configuration from remote panel (needed for port before registration)
-    let remote_config = api_manager.fetch_config().await?;
+    // Create user manager (panel-core)
+    let user_manager = Arc::new(UserManager::new());
+
+    // Fetch configuration from remote panel
+    let node_config = api_manager.fetch_config().await?;
+    let trojan_config = config::parse_trojan_config(node_config)?;
 
     // Initialize node with port from config
-    let register_id = api_manager.initialize(remote_config.server_port).await?;
-    log::info!(register_id = %register_id, "Node initialized");
+    api_manager.initialize(trojan_config.server_port).await?;
+    log::info!("Node initialized");
 
     // Fetch initial users
-    let users = api_manager.fetch_users().await?;
-    user_manager.init(&users);
+    if let Some(users) = api_manager.fetch_users().await? {
+        user_manager.init(&users);
+        log::info!(count = users.len(), "Initial users loaded");
+    }
 
     // Build server config
-    let server_config = config::ServerConfig::from_remote(&remote_config, &cli)?;
+    let server_config = config::ServerConfig::from_remote(&trojan_config, &cli)?;
 
-    // Create authenticator using shared user map
-    let authenticator = Arc::new(ApiAuthenticator::new(user_manager.get_users_arc()));
+    // Create authenticator using panel-core's UserManager
+    let authenticator = Arc::new(TrojanAuthenticator(Arc::clone(&user_manager)));
 
-    // Create stats collector
-    let stats_collector = Arc::new(ApiStatsCollector::new());
+    // Create stats collector wrapping panel-core's StatsCollector
+    let panel_stats = Arc::new(PanelStatsCollector::new());
+    let stats_collector = Arc::new(TrojanStatsCollector(Arc::clone(&panel_stats)));
 
     // Build router from ACL config
     let router = server_runner::build_router(&server_config, cli.refresh_geodata).await?;
@@ -104,18 +124,43 @@ async fn main() -> Result<()> {
             .build(),
     );
 
-    // Start background tasks
-    let task_config = TaskConfig::new(
-        cli.fetch_users_interval,
-        cli.report_traffics_interval,
-        cli.heartbeat_interval,
-    );
+    // Start background tasks with user diff callback for connection kicks
+    let task_config = TaskConfig {
+        fetch_users_interval: cli.fetch_users_interval,
+        report_traffic_interval: cli.report_traffics_interval,
+        heartbeat_interval: cli.heartbeat_interval,
+    };
+
+    let conn_manager_for_kicks = conn_manager_for_shutdown.clone();
     let background_tasks = BackgroundTasks::new(
         task_config,
         Arc::clone(&api_manager),
         Arc::clone(&user_manager),
-        Arc::clone(&stats_collector),
-    );
+        Arc::clone(&panel_stats),
+    )
+    .on_user_diff(Arc::new(move |diff| {
+        // Kick connections for removed users and users with changed UUIDs
+        let kick_ids: Vec<i64> = diff
+            .removed_ids
+            .iter()
+            .chain(diff.uuid_changed_ids.iter())
+            .copied()
+            .collect();
+        if !kick_ids.is_empty() {
+            let mut total_kicked = 0usize;
+            for &uid in &kick_ids {
+                total_kicked += conn_manager_for_kicks.kick_user(uid);
+            }
+            if total_kicked > 0 {
+                log::info!(
+                    kicked = total_kicked,
+                    removed = diff.removed,
+                    uuid_changed = diff.uuid_changed,
+                    "Kicked connections for removed/changed users"
+                );
+            }
+        }
+    }));
     let background_handle = background_tasks.start();
 
     // Create cancellation token for graceful shutdown
