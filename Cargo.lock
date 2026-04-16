@@ -1034,7 +1034,8 @@ checksum = "384b8ab6d37215f3c5301a95a4accb5d64aa607f1fcb26a11b5303878451b4fe"
 
 [[package]]
 name = "panel-core"
-version = "0.1.4"
+version = "0.1.6"
+source = "git+https://github.com/xflash-panda/server-panel-rs.git?tag=v0.1.6#4f4154566a8334078ef4ba78058a54a5c9c27cce"
 dependencies = [
  "anyhow",
  "arc-swap",
@@ -1049,12 +1050,14 @@ dependencies = [
 
 [[package]]
 name = "panel-http"
-version = "0.1.4"
+version = "0.1.6"
+source = "git+https://github.com/xflash-panda/server-panel-rs.git?tag=v0.1.6#4f4154566a8334078ef4ba78058a54a5c9c27cce"
 dependencies = [
  "anyhow",
  "async-trait",
  "hostname",
  "panel-core",
+ "serde",
  "serde_json",
  "server-client-rs",
  "tokio",
@@ -1540,7 +1543,7 @@ dependencies = [
 
 [[package]]
 name = "server-trojan-rs"
-version = "0.2.25"
+version = "0.2.27"
 dependencies = [
  "acl-engine-rs",
  "anyhow",
