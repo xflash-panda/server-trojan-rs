@@ -67,9 +67,9 @@ async fn main() -> Result<()> {
         token: cli.token.clone(),
         node_id: cli.node,
         node_type: panel_core::NodeType::Trojan,
-        state_file_path: cli.data_dir.join("state.json"),
         api_timeout: cli.api_timeout.as_secs(),
         debug: cli.log_mode == "debug",
+        data_dir: cli.data_dir.clone(),
     };
 
     // Create API manager
