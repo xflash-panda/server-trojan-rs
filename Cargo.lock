@@ -1225,8 +1225,8 @@ checksum = "7c87def4c32ab89d880effc9e097653c8da5d6ef28e6b539d313baaacfbafcbe"
 
 [[package]]
 name = "panel-connect-rpc"
-version = "0.1.4"
-source = "git+https://github.com/xflash-panda/server-panel-rs?tag=v0.1.4#24ea52a1bb9426ccdfe171803b32f8d78467be3c"
+version = "0.1.7"
+source = "git+https://github.com/xflash-panda/server-panel-rs?tag=v0.1.7#b68ff7552d88de6a2428a47041edd6047cea20ed"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1244,8 +1244,8 @@ dependencies = [
 
 [[package]]
 name = "panel-core"
-version = "0.1.4"
-source = "git+https://github.com/xflash-panda/server-panel-rs?tag=v0.1.4#24ea52a1bb9426ccdfe171803b32f8d78467be3c"
+version = "0.1.7"
+source = "git+https://github.com/xflash-panda/server-panel-rs?tag=v0.1.7#b68ff7552d88de6a2428a47041edd6047cea20ed"
 dependencies = [
  "anyhow",
  "arc-swap",
@@ -1822,7 +1822,7 @@ dependencies = [
 
 [[package]]
 name = "server-trojan-rs"
-version = "0.2.25"
+version = "0.2.26"
 dependencies = [
  "acl-engine-rs",
  "anyhow",

@@ -1,6 +1,6 @@
 [package]
 name = "server-trojan-rs"
-version = "0.2.25"
+version = "0.2.26"
 edition = "2021"
 
 [dependencies]
@@ -35,8 +35,8 @@ arc-swap = "1"
 acl-engine-rs = { git = "https://github.com/xflash-panda/acl-engine-rs.git", tag = "v0.4.4", features = ["async"] }
 
 # Panel Integration (connect-rpc via QUIC/H3)
-panel-core = { git = "https://github.com/xflash-panda/server-panel-rs", tag = "v0.1.4" }
-panel-connect-rpc = { git = "https://github.com/xflash-panda/server-panel-rs", tag = "v0.1.4" }
+panel-core = { git = "https://github.com/xflash-panda/server-panel-rs", tag = "v0.1.7" }
+panel-connect-rpc = { git = "https://github.com/xflash-panda/server-panel-rs", tag = "v0.1.7" }
 socket2 = "0.6"
 
 [[bin]]
