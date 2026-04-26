@@ -9,7 +9,20 @@ use serde::Deserialize;
 use std::path::PathBuf;
 use std::time::Duration;
 
-use crate::business::NodeConfigEnum;
+use crate::business::{IpVersion, NodeConfigEnum};
+
+/// Parse IP version string (v4, v6, auto) into IpVersion enum
+fn parse_ip_version(s: &str) -> Result<IpVersion, String> {
+    match s.to_lowercase().as_str() {
+        "v4" | "ipv4" | "4" => Ok(IpVersion::V4),
+        "v6" | "ipv6" | "6" => Ok(IpVersion::V6),
+        "auto" => Ok(IpVersion::Auto),
+        _ => Err(format!(
+            "Invalid IP version '{}'. Use 'v4', 'v6', or 'auto'",
+            s
+        )),
+    }
+}
 
 /// Parse duration string (e.g., "60s", "2m", "1h") or plain seconds
 fn parse_duration(s: &str) -> Result<Duration, String> {
@@ -97,11 +110,7 @@ pub struct CliArgs {
     pub server_name: Option<String>,
 
     /// CA certificate path for panel TLS (omit for system trust store)
-    #[arg(
-        long = "ca_file",
-        env = "X_PANDA_TROJAN_CA_FILE",
-        value_name = "PATH"
-    )]
+    #[arg(long = "ca_file", env = "X_PANDA_TROJAN_CA_FILE", value_name = "PATH")]
     pub ca_file: Option<String>,
 
     /// Log mode: debug, info, warn, error (default: info)
@@ -127,6 +136,16 @@ pub struct CliArgs {
         default_value_t = false
     )]
     pub refresh_geodata: bool,
+
+    /// IP version for panel API connections: v4, v6, or auto (default: v4)
+    #[arg(
+        long = "panel_ip_version",
+        env = "X_PANDA_TROJAN_PANEL_IP_VERSION",
+        default_value = "v4",
+        value_parser = parse_ip_version,
+        help_heading = "Network"
+    )]
+    pub panel_ip_version: IpVersion,
 
     // ==================== Performance Tuning ====================
     /// Connection idle timeout - disconnect if no data transferred (default: 5m)
@@ -371,8 +390,6 @@ impl ConnConfig {
 /// Runtime server configuration (built from remote panel config + CLI args)
 #[derive(Debug, Clone)]
 pub struct ServerConfig {
-    /// Host address to bind
-    pub host: String,
     /// Port number
     pub port: u16,
     /// Enable WebSocket mode
@@ -425,7 +442,6 @@ impl ServerConfig {
         let key = Some(PathBuf::from(&cli.key_file));
 
         Ok(Self {
-            host: "0.0.0.0".to_string(), // Always bind to all interfaces
             port: remote.server_port,
             enable_ws,
             enable_grpc,
@@ -478,6 +494,7 @@ mod tests {
             refresh_geodata: false,
             server_name: None,
             ca_file: None,
+            panel_ip_version: IpVersion::V4,
         }
     }
 
@@ -517,6 +534,7 @@ mod tests {
             max_connections: 0,
             server_name: None,
             ca_file: None,
+            panel_ip_version: IpVersion::V4,
         };
         (cli, temp_dir)
     }
@@ -728,16 +746,6 @@ mod tests {
     }
 
     #[test]
-    fn test_server_config_host_always_binds_all() {
-        let mut remote = create_test_trojan_config(None);
-        remote.server_port = 8080;
-        let cli = create_test_cli_args();
-        let config = ServerConfig::from_remote(&remote, &cli).unwrap();
-
-        assert_eq!(config.host, "0.0.0.0");
-    }
-
-    #[test]
     fn test_server_config_default_ws_path() {
         let remote = create_test_trojan_config(Some("ws"));
         let cli = create_test_cli_args();
@@ -841,6 +849,26 @@ mod tests {
         let config = ConnConfig::from_cli(&cli);
         assert_eq!(config.uplink_only_timeout_secs(), 0);
         assert_eq!(config.downlink_only_timeout_secs(), 0);
+    }
+
+    #[test]
+    fn test_parse_ip_version_valid() {
+        assert_eq!(parse_ip_version("v4").unwrap(), IpVersion::V4);
+        assert_eq!(parse_ip_version("v6").unwrap(), IpVersion::V6);
+        assert_eq!(parse_ip_version("auto").unwrap(), IpVersion::Auto);
+        assert_eq!(parse_ip_version("ipv4").unwrap(), IpVersion::V4);
+        assert_eq!(parse_ip_version("ipv6").unwrap(), IpVersion::V6);
+        assert_eq!(parse_ip_version("4").unwrap(), IpVersion::V4);
+        assert_eq!(parse_ip_version("6").unwrap(), IpVersion::V6);
+        assert_eq!(parse_ip_version("V4").unwrap(), IpVersion::V4);
+        assert_eq!(parse_ip_version("AUTO").unwrap(), IpVersion::Auto);
+    }
+
+    #[test]
+    fn test_parse_ip_version_invalid() {
+        assert!(parse_ip_version("invalid").is_err());
+        assert!(parse_ip_version("").is_err());
+        assert!(parse_ip_version("v5").is_err());
     }
 
     #[test]

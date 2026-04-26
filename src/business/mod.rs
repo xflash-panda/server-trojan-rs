@@ -10,7 +10,7 @@ use crate::core::hooks::{Authenticator, StatsCollector};
 use crate::core::UserId;
 
 pub use panel_connect_rpc::{
-    ConnectRpcApiManager as ApiManager, ConnectRpcPanelConfig as PanelConfig,
+    ConnectRpcApiManager as ApiManager, ConnectRpcPanelConfig as PanelConfig, IpVersion,
 };
 pub use panel_core::{
     BackgroundTasks, NodeConfigEnum, NodeType, PanelApi, StatsCollector as PanelStatsCollector,

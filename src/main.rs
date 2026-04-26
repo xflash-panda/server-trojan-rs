@@ -14,6 +14,7 @@ mod core;
 mod error;
 mod handler;
 mod logger;
+mod net;
 mod server_runner;
 mod transport;
 
@@ -72,6 +73,7 @@ async fn main() -> Result<()> {
             .clone()
             .unwrap_or_else(|| cli.server_host.clone()),
         ca_cert_path: cli.ca_file.clone(),
+        ip_version: cli.panel_ip_version,
     };
 
     // Create API manager (connect-rpc via QUIC/H3)

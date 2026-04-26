@@ -206,7 +206,6 @@ pub async fn run_server(server: Arc<Server>, config: &config::ServerConfig) -> R
     use crate::transport::TlsTransportListener;
     use tokio::sync::Semaphore;
 
-    let addr = format!("{}:{}", config.host, config.port);
     let (transport_type, has_tls) = build_transport_config(config);
 
     // Connection limiter: 0 = unlimited
@@ -227,23 +226,8 @@ pub async fn run_server(server: Arc<Server>, config: &config::ServerConfig) -> R
         None
     };
 
-    // Bind TCP listener with SO_REUSEADDR for fast restarts
-    let socket_addr: std::net::SocketAddr = addr.parse()?;
-    let socket = socket2::Socket::new(
-        match socket_addr {
-            std::net::SocketAddr::V4(_) => socket2::Domain::IPV4,
-            std::net::SocketAddr::V6(_) => socket2::Domain::IPV6,
-        },
-        socket2::Type::STREAM,
-        Some(socket2::Protocol::TCP),
-    )?;
-    // Allow immediate rebind after restart (skip TIME_WAIT)
-    socket.set_reuse_address(true)?;
-    socket.set_nonblocking(true)?;
-    socket.bind(&socket_addr.into())?;
-    socket.listen(server.conn_config.tcp_backlog)?;
-
-    let listener = tokio::net::TcpListener::from_std(socket.into())?;
+    // Bind TCP listener with dual-stack (IPv4+IPv6) support
+    let listener = crate::net::bind_dual_stack(config.port, server.conn_config.tcp_backlog)?;
     let local_addr = listener.local_addr()?;
 
     // Build network settings from config (Arc-wrapped to avoid per-connection String clones)
