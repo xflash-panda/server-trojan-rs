@@ -1366,15 +1366,15 @@ checksum = "7c87def4c32ab89d880effc9e097653c8da5d6ef28e6b539d313baaacfbafcbe"
 
 [[package]]
 name = "panel-connect-rpc"
-version = "0.1.13"
-source = "git+https://github.com/xflash-panda/server-panel-rs?tag=v0.1.13#194154e0b121a5ce0d8b5fbf42dd0ce105986939"
+version = "0.1.14"
+source = "git+https://github.com/xflash-panda/server-panel-rs?tag=v0.1.15#b293be504e890dedd7959263e104543110472bd4"
 dependencies = [
  "anyhow",
  "async-trait",
  "connect-rust-h3",
  "connectrpc",
  "hostname",
- "panel-core",
+ "panel-core 0.1.12",
  "serde",
  "serde_json",
  "server-agent-proto-rs",
@@ -1387,6 +1387,22 @@ dependencies = [
 name = "panel-core"
 version = "0.1.11"
 source = "git+https://github.com/xflash-panda/server-panel-rs?tag=v0.1.13#194154e0b121a5ce0d8b5fbf42dd0ce105986939"
+dependencies = [
+ "anyhow",
+ "arc-swap",
+ "async-trait",
+ "dashmap",
+ "hex",
+ "scopeguard",
+ "sha2",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
+name = "panel-core"
+version = "0.1.12"
+source = "git+https://github.com/xflash-panda/server-panel-rs?tag=v0.1.15#b293be504e890dedd7959263e104543110472bd4"
 dependencies = [
  "anyhow",
  "arc-swap",
@@ -1948,7 +1964,7 @@ dependencies = [
 [[package]]
 name = "server-agent-proto-rs"
 version = "0.3.1"
-source = "git+https://github.com/xflash-panda/server-agent-proto-rs.git?tag=v0.3.1#e3a60cada3f4ab1d0d148a614a06587509fa0c52"
+source = "git+https://github.com/xflash-panda/server-agent-proto-rs.git?tag=v0.3.1#71c1aed4f5c292fc5dd0a9c58cdc29ca72fdc22b"
 dependencies = [
  "buffa",
  "buffa-types",
@@ -1961,8 +1977,8 @@ dependencies = [
 
 [[package]]
 name = "server-client-rs"
-version = "0.1.15"
-source = "git+https://github.com/xflash-panda/server-client-rs.git?tag=v0.1.15#9fe614447078d7764debb0ad9afbc58bd4c377f9"
+version = "0.1.16"
+source = "git+https://github.com/xflash-panda/server-client-rs.git?tag=v0.1.16#208f56ca86547ccdbb5bdca57c93667397dd024c"
 dependencies = [
  "reqwest",
  "serde",
@@ -1991,7 +2007,7 @@ dependencies = [
  "humantime",
  "libc",
  "panel-connect-rpc",
- "panel-core",
+ "panel-core 0.1.11",
  "rustls",
  "rustls-pemfile",
  "scopeguard",
