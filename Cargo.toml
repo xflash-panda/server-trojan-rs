@@ -26,7 +26,7 @@ tracing-subscriber = { version = "0.3", features = ["tracing-log", "std", "local
 time = { version = "0.3", features = ["macros", "local-offset"] }
 tokio-util = "0.7"
 scopeguard = "1.2.0"
-dashmap = "6.1"
+dashmap = "6.2"
 tikv-jemallocator = "0.6"
 async-trait = "0.1"
 arc-swap = "1"
